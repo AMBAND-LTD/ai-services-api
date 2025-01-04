@@ -308,7 +308,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: airflow celery worker
+    command: bash -c "rm -f /opt/airflow/airflow-worker.pid && airflow celery worker"
+    working_dir: /opt/airflow
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
