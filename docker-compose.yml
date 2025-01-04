@@ -181,7 +181,7 @@ services:
       - aphrc-network
     environment:
       PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-brianp0stgres97@gmail.com}"
-      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-p0stgres}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-p0stgres}" 
     ports:
       - "5050:80"
     depends_on:
