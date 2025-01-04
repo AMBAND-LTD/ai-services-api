@@ -3,13 +3,6 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 
-from ai_services_api.services.data.database_setup import (
-    create_database_if_not_exists,
-    create_tables,
-    fix_experts_table,
-    get_db_connection
-)
-
 from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
@@ -48,41 +41,6 @@ def setup_environment():
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-def initialize_database(expertise_csv):
-    try:
-        logger.info("Ensuring database exists...")
-        create_database_if_not_exists()
-        
-        logger.info("Creating database tables...")
-        create_tables()
-        
-        # Verify tables exist
-        conn = get_db_connection()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'resources_resource'
-                );
-            """)
-            if cur.fetchone()[0]:
-                logger.info("resources_resource table created successfully")
-            else:
-                raise Exception("Failed to create resources_resource table")
-        finally:
-            cur.close()
-            conn.close()
-        
-        logger.info("Fixing experts table...")
-        fix_experts_table()
-        
-        logger.info("Database initialization complete!")
-        
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        raise
 
 def initialize_graph():
     """Initialize the Neo4j graph database."""
@@ -222,42 +180,23 @@ async def run_monthly_setup(expertise_csv='expertise.csv', skip_openalex=False, 
         # Step 1: Setup environment
         setup_environment()
         
-        # Step 2: Initialize database and ensure tables exist
-        logger.info("Running database setup...")
-        initialize_database(expertise_csv)
-        
-        # Step 3: Process data (this should populate the tables)
+        # Step 2: Process data (this should populate the tables)
         logger.info("Processing data...")
         await process_data(expertise_csv, skip_openalex, skip_publications)
         
-        # Step 4: Verify tables are populated
-        conn = get_db_connection()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM resources_resource LIMIT 1
-                );
-            """)
-            if not cur.fetchone()[0]:
-                logger.warning("No data in resources_resource table. Search index may be empty.")
-        finally:
-            cur.close()
-            conn.close()
-        
-        # Step 5: Initialize graph database (if not skipped)
+        # Step 3: Initialize graph database (if not skipped)
         if not skip_graph:
             if not initialize_graph():
                 logger.error("Graph initialization failed")
                 raise RuntimeError("Graph initialization failed")
         
-        # Step 6: Create search index (if not skipped and data exists)
+        # Step 4: Create search index (if not skipped and data exists)
         if not skip_search:
             if not create_search_index():
                 logger.error("FAISS index creation failed")
                 raise RuntimeError("FAISS index creation failed")
         
-        # Step 7: Create Redis index (if not skipped)
+        # Step 5: Create Redis index (if not skipped)
         if not skip_redis:
             if not create_redis_index():
                 logger.error("Redis index creation failed")
