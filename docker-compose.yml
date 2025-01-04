@@ -300,9 +300,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
         reservations:
-          memory: 512M
+          memory: 1G
 
   airflow-worker:
     build:
@@ -315,6 +315,7 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
       - AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
+      - AIRFLOW__CELERY__WORKER_CONCURRENCY=4  
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
       - AIRFLOW_HOME=/opt/airflow
       - PYTHONPATH=/code
@@ -331,9 +332,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
         reservations:
-          memory: 512M
+          memory: 1G
 
   airflow-init:
     build:
