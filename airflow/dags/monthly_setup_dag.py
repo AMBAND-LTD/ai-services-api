@@ -38,7 +38,14 @@ dag = DAG(
 def execute_monthly_setup(**context):
     """Execute the monthly setup process"""
     try:
-        asyncio.run(run_monthly_setup())
+        asyncio.run(run_monthly_setup(
+            expertise_csv='expertise.csv',
+            skip_openalex=False,
+            skip_publications=False,
+            skip_graph=False,
+            skip_search=False,
+            skip_redis=False
+        ))
         return "Monthly setup completed successfully"
     except Exception as e:
         logger.error(f"Monthly setup failed: {e}")
