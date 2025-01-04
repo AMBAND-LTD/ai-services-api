@@ -182,13 +182,8 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-brianp0stgres97@gmail.com}"
       PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-p0stgres}"
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
-      GUNICORN_ACCESS_LOGFILE: "/var/log/pgadmin/gunicorn_access.log"
     ports:
       - "5050:80"
-    volumes:
-      - pgadmin-data:/var/lib/pgadmin
     depends_on:
       postgres:
         condition: service_healthy
@@ -376,4 +371,3 @@ volumes:
   postgres-data:
   redis-data:
   neo4j-data:
-  pgadmin-data:
