@@ -19,8 +19,15 @@ class ResearchNexusScraper:
     def __init__(self, summarizer: Optional[TextSummarizer] = None):
         """Initialize ResearchNexusScraper with summarization capability."""
         self.base_url = "https://research-nexus.net"
-        self.aphrc_url = f"{self.base_url}/institution/9000041605/"
-        self.search_url = f"{self.base_url}/directory/"
+        self.search_url = f"{self.base_url}/research/"
+        self.search_params = {
+            'kwd': 'aphrc',
+            'stp': 'broad',
+            'yrl': '2000',
+            'yrh': '2025',
+            'limit': '1000',
+            'sort': 'score_desc'
+        }
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
@@ -38,24 +45,138 @@ class ResearchNexusScraper:
         """Fetch APHRC publications from Research Nexus."""
         publications = []
         logger.info(f"Starting to fetch up to {limit} publications from Research Nexus")
-        logger.info(f"Primary source: {self.aphrc_url}")
-        logger.info(f"Secondary source: {self.search_url}")
+        logger.info(f"Using search URL: {self.search_url}")
+        logger.info(f"Search parameters: {self.search_params}")
         
         try:
-            response = self._make_request(self.aphrc_url)
+            response = self._make_request(self.search_url, params=self.search_params)
             if response.status_code != 200:
-                logger.error(f"Failed to access APHRC page: {response.status_code}")
+                logger.error(f"Failed to access search page: {response.status_code}")
                 return publications
+
+            logger.info("Successfully accessed search results page")
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find all publication items
+            pub_items = soup.find_all('div', class_=['search-result', 'research-item', 'result-item'])
+            total_items = len(pub_items)
+            logger.info(f"Found {total_items} publication items in search results")
+            
+            for i, item in enumerate(pub_items[:limit], 1):
+                try:
+                    logger.info(f"\nProcessing publication {i}/{min(total_items, limit)}")
+                    publication = self._parse_publication(item)
+                    if publication and publication['doi'] not in self.seen_dois:
+                        logger.info("=" * 80)
+                        logger.info("Publication Details:")
+                        logger.info(f"Title: {publication['title']}")
+                        logger.info(f"Authors: {', '.join(publication['authors']) if publication['authors'] else 'No authors listed'}")
+                        logger.info(f"Type: {publication['type']}")
+                        logger.info(f"Date: {publication['date_issue'] or 'No date available'}")
+                        logger.info(f"DOI: {publication['doi']}")
+                        
+                        # Log keywords if available
+                        keywords = json.loads(publication['identifiers'])['keywords']
+                        if keywords:
+                            logger.info(f"Keywords: {', '.join(keywords)}")
+                        
+                        # Log abstract preview
+                        if publication['abstract']:
+                            abstract_preview = publication['abstract'][:200] + "..." if len(publication['abstract']) > 200 else publication['abstract']
+                            logger.info(f"Abstract preview: {abstract_preview}")
+                        
+                        logger.info("=" * 80)
+                        
+                        publications.append(publication)
+                        self.seen_dois.add(publication['doi'])
+                        logger.info(f"Total publications processed so far: {len(publications)}")
+                        
+                        if len(publications) >= limit:
+                            logger.info(f"Reached desired limit of {limit} publications")
+                            break
+                except Exception as e:
+                    logger.error(f"Error parsing publication: {e}")
+                    continue
+            
+            if not publications:
+                logger.warning("No publications found in search results")
+                logger.debug("Search results structure:")
+                logger.debug(soup.prettify())
+            
+            return publications
+            
+        except Exception as e:
+            logger.error(f"Error fetching content: {e}")
+            return publications
 
             logger.info("Successfully accessed APHRC institution page")
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Debug log the HTML structure
+            logger.debug("HTML structure:")
+            logger.debug(soup.prettify()[:500])  # First 500 chars of formatted HTML
+            
             logger.info("Parsing institution page for publications")
-            pub_section = soup.find('section', {'id': 'publications'}) or soup.find('div', class_='publications')
+            pub_section = soup.find('section', {'id': 'publications'}) or \
+                         soup.find('div', class_='publications') or \
+                         soup.find('div', class_=['publication-listing', 'search-results'])
+            
             if pub_section:
-                pub_items = pub_section.find_all('article') or pub_section.find_all('div', class_='publication-item')
+                logger.info("Found publications section")
+                # Try multiple selectors for publication items
+                pub_items = pub_section.find_all(['article', 'div'], class_=['publication-item', 'search-result-item', 'result-item']) or \
+                           pub_section.find_all(['article', 'div'], class_='row') or \
+                           pub_section.find_all('div', recursive=False)
+                
                 total_items = len(pub_items)
                 logger.info(f"Found {total_items} publication items on institution page")
+                
+                if total_items == 0:
+                    logger.debug("Publication section HTML:")
+                    logger.debug(pub_section.prettify())
+                
+                for i, item in enumerate(pub_items[:limit], 1):
+                    try:
+                        logger.info(f"\nProcessing publication {i}/{min(total_items, limit)}")
+                        logger.debug("Publication item HTML:")
+                        logger.debug(item.prettify())
+                        
+                        publication = self._parse_publication(item)
+                        if publication and publication['doi'] not in self.seen_dois:
+                            logger.info("=" * 80)
+                            logger.info("Publication Details:")
+                            logger.info(f"Title: {publication['title']}")
+                            logger.info(f"Authors: {', '.join(publication['authors']) if publication['authors'] else 'No authors listed'}")
+                            logger.info(f"Type: {publication['type']}")
+                            logger.info(f"Date: {publication['date_issue'] or 'No date available'}")
+                            logger.info(f"DOI: {publication['doi']}")
+                            
+                            # Log keywords if available
+                            keywords = json.loads(publication['identifiers'])['keywords']
+                            if keywords:
+                                logger.info(f"Keywords: {', '.join(keywords)}")
+                            
+                            # Log abstract preview
+                            if publication['abstract']:
+                                abstract_preview = publication['abstract'][:200] + "..." if len(publication['abstract']) > 200 else publication['abstract']
+                                logger.info(f"Abstract preview: {abstract_preview}")
+                            
+                            logger.info("=" * 80)
+                            
+                            publications.append(publication)
+                            self.seen_dois.add(publication['doi'])
+                            logger.info(f"Total publications processed so far: {len(publications)}")
+                            
+                            if len(publications) >= limit:
+                                logger.info(f"Reached desired limit of {limit} publications")
+                                break
+                    except Exception as e:
+                        logger.error(f"Error parsing publication: {e}")
+                        continue
+            else:
+                logger.warning("No publications section found on institution page")
+                logger.debug("Page structure:")
+                logger.debug(soup.prettify())
                 
                 for i, item in enumerate(pub_items[:limit], 1):
                     try:
