@@ -31,38 +31,29 @@ class ResearchNexusScraper:
         
         # Track seen publications to avoid duplicates
         self.seen_dois = set()
+        
+        logger.info("ResearchNexusScraper initialized")
 
     def fetch_content(self, limit: int = 10) -> List[Dict]:
-        """
-        Fetch APHRC publications from Research Nexus.
-        
-        Args:
-            limit (int): Maximum number of publications to fetch
-            
-        Returns:
-            List[Dict]: List of publications in standard format
-        """
+        """Fetch APHRC publications from Research Nexus."""
+        publications = []
         logger.info(f"Starting to fetch up to {limit} publications from Research Nexus")
         logger.info(f"Primary source: {self.aphrc_url}")
         logger.info(f"Secondary source: {self.search_url}")
-        publications = []
+        
         try:
-            # First get the institution page
             response = self._make_request(self.aphrc_url)
             if response.status_code != 200:
                 logger.error(f"Failed to access APHRC page: {response.status_code}")
                 return publications
 
-            # Parse the institution page
             logger.info("Successfully accessed APHRC institution page")
             soup = BeautifulSoup(response.text, 'html.parser')
             
             logger.info("Parsing institution page for publications")
-            # Find the publications section and extract publications
             pub_section = soup.find('section', {'id': 'publications'}) or soup.find('div', class_='publications')
             if pub_section:
                 pub_items = pub_section.find_all('article') or pub_section.find_all('div', class_='publication-item')
-                
                 total_items = len(pub_items)
                 logger.info(f"Found {total_items} publication items on institution page")
                 
@@ -71,7 +62,27 @@ class ResearchNexusScraper:
                         logger.info(f"Processing publication {i}/{min(total_items, limit)}")
                         publication = self._parse_publication(item)
                         if publication and publication['doi'] not in self.seen_dois:
-                            logger.info(f"Successfully parsed: {publication['title'][:100]}...")
+                            # Log detailed publication info
+                            logger.info("=" * 80)
+                            logger.info("Publication Details:")
+                            logger.info(f"Title: {publication['title']}")
+                            logger.info(f"Authors: {', '.join(publication['authors']) if publication['authors'] else 'No authors listed'}")
+                            logger.info(f"Type: {publication['type']}")
+                            logger.info(f"Date: {publication['date_issue'] or 'No date available'}")
+                            logger.info(f"DOI: {publication['doi']}")
+                            
+                            # Log keywords if available
+                            keywords = json.loads(publication['identifiers'])['keywords']
+                            if keywords:
+                                logger.info(f"Keywords: {', '.join(keywords)}")
+                            
+                            # Log abstract preview
+                            if publication['abstract']:
+                                abstract_preview = publication['abstract'][:200] + "..." if len(publication['abstract']) > 200 else publication['abstract']
+                                logger.info(f"Abstract preview: {abstract_preview}")
+                            
+                            logger.info("=" * 80)
+                            
                             publications.append(publication)
                             self.seen_dois.add(publication['doi'])
                             logger.info(f"Total publications processed so far: {len(publications)}")
@@ -82,8 +93,7 @@ class ResearchNexusScraper:
                     except Exception as e:
                         logger.error(f"Error parsing publication: {e}")
                         continue
-            
-            # If we still need more publications, try the search endpoint
+
             if len(publications) < limit:
                 search_publications = self._fetch_from_search(limit - len(publications))
                 for pub in search_publications:
@@ -94,7 +104,7 @@ class ResearchNexusScraper:
                         if len(publications) >= limit:
                             break
             
-            return publications[:limit]
+            return publications
             
         except Exception as e:
             logger.error(f"Error fetching content: {e}")
@@ -103,14 +113,14 @@ class ResearchNexusScraper:
     def _fetch_from_search(self, limit: int) -> List[Dict]:
         """Fetch publications using the search endpoint."""
         publications = []
-        logger.info(f"\nAttempting to fetch additional {limit} publications from search endpoint")
+        logger.info(f"Attempting to fetch additional {limit} publications from search endpoint")
         try:
             logger.info("Constructing search parameters for APHRC")
             params = {
                 'types': 'institutions',
                 'src': 'kwd',
                 'search': 'aphrc',
-                'limit': 25  # Maximum allowed by the site
+                'limit': 25
             }
             
             logger.info(f"Making request to search endpoint with params: {params}")
@@ -120,9 +130,9 @@ class ResearchNexusScraper:
                 return publications
 
             logger.info("Successfully accessed search endpoint")
+            logger.info("\nProcessing publications from search results...")
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Find publication listings
             pub_items = soup.find_all('article') or soup.find_all('div', class_='publication-item')
             
             for item in pub_items[:limit]:
@@ -146,14 +156,14 @@ class ResearchNexusScraper:
     def _parse_publication(self, element: BeautifulSoup) -> Optional[Dict]:
         """Parse a publication element into standardized format."""
         try:
-            logger.debug("Starting to parse publication element")
-            # Extract basic information
-                            title_elem = element.find(['h1', 'h2', 'h3', 'h4', 'a'], class_='title') or \
+            logger.info("\nExtracting publication information...")
+            
+            title_elem = element.find(['h1', 'h2', 'h3', 'h4', 'a'], class_='title') or \
                         element.find(['h1', 'h2', 'h3', 'h4', 'a'])
             if not title_elem:
                 logger.warning("No title element found in publication")
                 return None
-                
+            
             title = safe_str(title_elem.text.strip())
             logger.debug(f"Found publication title: {title[:100]}...")
             
@@ -164,29 +174,17 @@ class ResearchNexusScraper:
             if url and not url.startswith('http'):
                 url = self.base_url + url
             
-            # Try to extract DOI from page, otherwise generate synthetic one
-            doi_elem = element.find('meta', {'name': 'citation_doi'}) or \
-                      element.find('span', class_='doi')
-            doi = doi_elem.get('content', '') if doi_elem else None
-            
-            if not doi:
-                doi = self._generate_synthetic_doi(title, url)
+            doi = self._generate_synthetic_doi(title, url)
             
             # Extract date and publication year
             date = None
-            year = None
-            
-            date_elem = element.find('meta', {'name': 'citation_publication_date'}) or \
-                       element.find(['time', 'span'], class_='date')
+            date_elem = element.find(['time', 'span'], class_=['date', 'published-date'])
             if date_elem:
-                date_str = date_elem.get('content', '') or date_elem.text.strip()
+                date_str = date_elem.get('datetime', '') or date_elem.text.strip()
                 date = self._parse_date(date_str)
-                if date:
-                    year = date.year
             
             # Extract abstract/description
-            abstract_elem = element.find('meta', {'name': 'citation_abstract'}) or \
-                          element.find(['div', 'p'], class_=['abstract', 'description'])
+            abstract_elem = element.find(['div', 'p'], class_=['abstract', 'description'])
             abstract = safe_str(abstract_elem.text.strip()) if abstract_elem else ''
             
             # Generate summary
@@ -198,21 +196,17 @@ class ResearchNexusScraper:
             
             # Extract authors
             authors = []
-            author_elems = element.find_all('meta', {'name': 'citation_author'}) or \
-                          element.find_all(['span', 'div'], class_='author')
-            
+            author_elems = element.find_all(['span', 'div'], class_='author')
             for author_elem in author_elems:
-                author_name = author_elem.get('content', '') or author_elem.text.strip()
+                author_name = author_elem.text.strip()
                 if author_name:
                     authors.append(author_name)
             
             # Extract publication type
-            pub_type = 'journal_article'  # Default type
-            type_elem = element.find('meta', {'name': 'citation_type'}) or \
-                       element.find(['span', 'div'], class_='type')
+            pub_type = 'other'
+            type_elem = element.find(['span', 'div'], class_='type')
             if type_elem:
-                type_text = type_elem.get('content', '') or type_elem.text.strip()
-                pub_type = self._normalize_publication_type(type_text)
+                pub_type = self._normalize_publication_type(type_elem.text.strip())
             
             # Extract and process keywords/tags
             tags = []
@@ -240,11 +234,9 @@ class ResearchNexusScraper:
                 })
             
             # Extract keywords
-            keyword_elems = element.find_all('meta', {'name': 'citation_keywords'}) or \
-                          element.find_all(['span', 'a'], class_=['keyword', 'tag'])
-            
+            keyword_elems = element.find_all(['span', 'a'], class_=['keyword', 'tag'])
             for kw_elem in keyword_elems:
-                keyword = kw_elem.get('content', '') or kw_elem.text.strip()
+                keyword = kw_elem.text.strip()
                 if keyword and keyword not in keywords:
                     keywords.append(keyword)
                     tags.append({
@@ -256,7 +248,7 @@ class ResearchNexusScraper:
                         })
                     })
             
-            # Construct complete publication record
+            # Construct publication record
             publication = {
                 'doi': doi,
                 'title': title,
@@ -305,7 +297,6 @@ class ResearchNexusScraper:
             return None
             
         try:
-            # Common date formats in Research Nexus
             formats = [
                 '%Y-%m-%d',
                 '%Y/%m/%d',
@@ -320,7 +311,6 @@ class ResearchNexusScraper:
                 except ValueError:
                     continue
             
-            # Try to extract year if full date parsing fails
             year_match = re.search(r'\d{4}', date_str)
             if year_match:
                 return datetime(int(year_match.group(0)), 1, 1)
@@ -329,21 +319,6 @@ class ResearchNexusScraper:
             
         except Exception:
             return None
-
-    def _generate_summary(self, title: str, abstract: str) -> str:
-        """Generate a summary using the TextSummarizer."""
-        try:
-            title = truncate_text(title, max_length=200)
-            abstract = truncate_text(abstract, max_length=1000)
-            try:
-                summary = self.summarizer.summarize(title, abstract)
-                return truncate_text(summary, max_length=500)
-            except Exception as e:
-                logger.error(f"Summary generation error: {e}")
-                return abstract if abstract else f"Publication about {title}"
-        except Exception as e:
-            logger.error(f"Error in summary generation: {e}")
-            return title
 
     def _normalize_publication_type(self, type_str: str) -> str:
         """Normalize publication type strings."""
@@ -368,6 +343,21 @@ class ResearchNexusScraper:
         type_str = type_str.lower().strip()
         return type_mapping.get(type_str, 'other')
 
+    def _generate_summary(self, title: str, abstract: str) -> str:
+        """Generate a summary using the TextSummarizer."""
+        try:
+            title = truncate_text(title, max_length=200)
+            abstract = truncate_text(abstract, max_length=1000)
+            try:
+                summary = self.summarizer.summarize(title, abstract)
+                return truncate_text(summary, max_length=500)
+            except Exception as e:
+                logger.error(f"Summary generation error: {e}")
+                return abstract if abstract else f"Publication about {title}"
+        except Exception as e:
+            logger.error(f"Error in summary generation: {e}")
+            return title
+
     def _make_request(self, url: str, params: Dict = None, method: str = 'get', **kwargs) -> requests.Response:
         """Make an HTTP request with error handling and rate limiting."""
         try:
@@ -380,7 +370,6 @@ class ResearchNexusScraper:
             response = requests.request(method, url, **kwargs)
             response.raise_for_status()
             
-            # Basic rate limiting
             logger.debug("Applying rate limiting delay (1 second)")
             sleep(1)
             
