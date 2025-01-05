@@ -2,12 +2,13 @@ import os
 import logging
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
-from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 import json
 import hashlib
+from datetime import datetime
 import re
 from time import sleep
+from urllib.parse import urljoin
 
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.data.openalex.text_processor import safe_str, truncate_text
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class KnowhubScraper:
     def __init__(self, summarizer: Optional[TextSummarizer] = None):
-        """Initialize KnowhubScraper."""
+        """Initialize KnowhubScraper with authentication capabilities."""
         self.base_url = os.getenv('KNOWHUB_BASE_URL', 'https://knowhub.aphrc.org')
         self.publications_url = f"{self.base_url}/handle/123456789/1"
         
@@ -50,7 +51,7 @@ class KnowhubScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Find publication listings - DSpace typically uses specific classes
+            # Find publication listings
             pub_items = soup.find_all(['div', 'article'], class_=['ds-artifact-item', 'item-wrapper', 'row artifact-description'])
             total_items = len(pub_items)
             logger.info(f"Found {total_items} publication items")
@@ -89,7 +90,7 @@ class KnowhubScraper:
                         logger.info("=" * 80)
                         
                         publications.append(publication)
-                        self.seen_handles.add(publication['identifiers']['handle'])
+                        self.seen_handles.add(identifiers['handle'])
                         logger.info(f"Total publications processed so far: {len(publications)}")
                         
                         if len(publications) >= limit:
@@ -100,67 +101,20 @@ class KnowhubScraper:
                     logger.error(f"Error processing publication item: {e}")
                     continue
             
-            # If we haven't found enough publications, try pagination
-            if len(publications) < limit:
-                additional_pubs = self._fetch_paginated_publications(limit - len(publications))
-                publications.extend(additional_pubs)
-            
-            return publications[:limit]
+            return publications
             
         except Exception as e:
             logger.error(f"Error fetching publications: {e}")
             return publications
 
-    def _fetch_paginated_publications(self, remaining_limit: int) -> List[Dict]:
-        """Fetch additional publications through pagination."""
-        publications = []
-        page = 2  # Start from page 2 since we've already processed page 1
-        
-        while len(publications) < remaining_limit:
-            try:
-                page_url = f"{self.publications_url}?page={page}"
-                logger.info(f"Fetching page {page}")
-                
-                response = self._make_request(page_url)
-                if response.status_code != 200:
-                    logger.warning(f"Failed to fetch page {page}")
-                    break
-                
-                soup = BeautifulSoup(response.text, 'html.parser')
-                pub_items = soup.find_all(['div', 'article'], class_=['ds-artifact-item', 'item-wrapper', 'row artifact-description'])
-                
-                if not pub_items:
-                    logger.info("No more publications found in pagination")
-                    break
-                
-                for item in pub_items:
-                    try:
-                        publication = self._parse_publication(item)
-                        if publication and publication['identifiers'].get('handle') not in self.seen_handles:
-                            publications.append(publication)
-                            self.seen_handles.add(publication['identifiers']['handle'])
-                            
-                            if len(publications) >= remaining_limit:
-                                break
-                    except Exception as e:
-                        logger.error(f"Error processing paginated publication: {e}")
-                        continue
-                
-                page += 1
-                sleep(1)  # Rate limiting
-                
-            except Exception as e:
-                logger.error(f"Error fetching page {page}: {e}")
-                break
-        
-        return publications
-
     def _parse_publication(self, element: BeautifulSoup) -> Optional[Dict]:
         """Parse a DSpace publication element."""
         try:
+            logger.info("\nExtracting publication information...")
+            
             # Extract title and URL
-            title_elem = element.find(['h4', 'h3', 'h2', 'a'], class_=['ds-artifact-title', 'artifact-title']) or \
-                        element.find('a', href=re.compile(r'/handle/'))
+            title_elem = element.find(['h4', 'h3', 'h2'], class_=['artifact-title', 'item-title']) or \
+                        element.find('a', class_='item-title')
             
             if not title_elem:
                 logger.warning("No title element found")
@@ -183,7 +137,7 @@ class KnowhubScraper:
                 logger.warning("No handle found for publication")
                 return None
             
-            # Extract metadata table
+            # Extract metadata
             metadata = self._extract_metadata(element)
             
             # Generate summary
@@ -268,7 +222,8 @@ class KnowhubScraper:
             return None
 
     def _extract_metadata(self, element: BeautifulSoup) -> Dict:
-        """Extract metadata from DSpace metadata table."""
+        """Extract metadata from publication element."""
+        logger.debug("Extracting metadata fields...")
         metadata = {
             'authors': [],
             'keywords': [],
@@ -281,42 +236,49 @@ class KnowhubScraper:
         }
         
         try:
-            # DSpace metadata is typically in a table or specific divs
-            meta_table = element.find('table', class_='ds-table') or \
-                        element.find('div', class_=['ds-metadata-fields', 'item-page-field-wrapper'])
+            # Find metadata section
+            meta_div = element.find('div', class_=['item-metadata', 'artifact-info'])
+            if not meta_div:
+                return metadata
             
-            if meta_table:
-                # Process each metadata row
-                rows = meta_table.find_all(['tr', 'div'], class_=['ds-table-row', 'item-page-field-wrapper'])
-                for row in rows:
-                    try:
-                        label = row.find(['td', 'div'], class_=['label-cell', 'field-label'])
-                        value = row.find(['td', 'div'], class_=['value-cell', 'field-value'])
-                        
-                        if not (label and value):
-                            continue
-                        
-                        label_text = label.text.strip().lower()
-                        value_text = value.text.strip()
-                        
-                        if 'author' in label_text or 'creator' in label_text:
-                            metadata['authors'].append(value_text)
-                        elif 'subject' in label_text or 'keyword' in label_text:
-                            metadata['keywords'].extend([k.strip() for k in value_text.split(',')])
-                        elif 'type' in label_text:
-                            metadata['type'] = self._normalize_publication_type(value_text)
-                        elif 'date' in label_text:
-                            metadata['date'] = self._parse_date(value_text)
-                        elif 'doi' in label_text:
-                            metadata['doi'] = value_text
-                        elif 'abstract' in label_text or 'description' in label_text:
-                            metadata['abstract'] = value_text
-                        elif 'language' in label_text:
-                            metadata['language'] = value_text.lower()[:2]
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing metadata row: {e}")
-                        continue
+            # Extract authors
+            author_elems = meta_div.find_all('span', class_=['author', 'creator'])
+            metadata['authors'] = [
+                author.text.strip()
+                for author in author_elems
+                if author.text.strip()
+            ]
+            
+            # Extract date
+            date_elem = meta_div.find('span', class_=['date', 'issued'])
+            if date_elem:
+                date_str = date_elem.text.strip()
+                metadata['date'] = self._parse_date(date_str)
+            
+            # Extract type
+            type_elem = meta_div.find('span', class_=['type', 'resourcetype'])
+            if type_elem:
+                metadata['type'] = self._normalize_publication_type(type_elem.text.strip())
+            
+            # Extract DOI
+            doi_elem = meta_div.find('span', class_='doi')
+            if doi_elem:
+                doi_match = re.search(r'10\.\d{4,}/\S+', doi_elem.text)
+                if doi_match:
+                    metadata['doi'] = doi_match.group(0)
+            
+            # Extract keywords
+            keyword_elems = meta_div.find_all('span', class_=['subject', 'keyword'])
+            metadata['keywords'] = [
+                kw.text.strip()
+                for kw in keyword_elems
+                if kw.text.strip()
+            ]
+            
+            # Extract abstract
+            abstract_elem = meta_div.find('span', class_=['abstract', 'description'])
+            if abstract_elem:
+                metadata['abstract'] = safe_str(abstract_elem.text.strip())
             
             return metadata
             
@@ -399,6 +361,7 @@ class KnowhubScraper:
         try:
             logger.debug(f"Making {method.upper()} request to: {url}")
             kwargs['headers'] = {**self.headers, **kwargs.get('headers', {})}
+            kwargs['verify'] = False  # Disable SSL verification
             
             response = requests.request(method, url, **kwargs)
             response.raise_for_status()
@@ -416,4 +379,10 @@ class KnowhubScraper:
         """Close resources and perform cleanup."""
         try:
             if hasattr(self.summarizer, 'close'):
-                self.
+                self.summarizer.close()
+            
+            self.seen_handles.clear()
+            
+            logger.info("KnowhubScraper resources cleaned up")
+        except Exception as e:
+            logger.error(f"Error closing KnowhubScraper: {e}")
