@@ -42,6 +42,9 @@ class ResearchNexusScraper:
         Returns:
             List[Dict]: List of publications in standard format
         """
+        logger.info(f"Starting to fetch up to {limit} publications from Research Nexus")
+        logger.info(f"Primary source: {self.aphrc_url}")
+        logger.info(f"Secondary source: {self.search_url}")
         publications = []
         try:
             # First get the institution page
@@ -51,21 +54,30 @@ class ResearchNexusScraper:
                 return publications
 
             # Parse the institution page
+            logger.info("Successfully accessed APHRC institution page")
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            logger.info("Parsing institution page for publications")
             # Find the publications section and extract publications
             pub_section = soup.find('section', {'id': 'publications'}) or soup.find('div', class_='publications')
             if pub_section:
                 pub_items = pub_section.find_all('article') or pub_section.find_all('div', class_='publication-item')
                 
-                for item in pub_items[:limit]:
+                total_items = len(pub_items)
+                logger.info(f"Found {total_items} publication items on institution page")
+                
+                for i, item in enumerate(pub_items[:limit], 1):
                     try:
+                        logger.info(f"Processing publication {i}/{min(total_items, limit)}")
                         publication = self._parse_publication(item)
                         if publication and publication['doi'] not in self.seen_dois:
+                            logger.info(f"Successfully parsed: {publication['title'][:100]}...")
                             publications.append(publication)
                             self.seen_dois.add(publication['doi'])
+                            logger.info(f"Total publications processed so far: {len(publications)}")
                             
                             if len(publications) >= limit:
+                                logger.info(f"Reached desired limit of {limit} publications")
                                 break
                     except Exception as e:
                         logger.error(f"Error parsing publication: {e}")
@@ -91,8 +103,9 @@ class ResearchNexusScraper:
     def _fetch_from_search(self, limit: int) -> List[Dict]:
         """Fetch publications using the search endpoint."""
         publications = []
+        logger.info(f"\nAttempting to fetch additional {limit} publications from search endpoint")
         try:
-            # Construct search parameters for APHRC
+            logger.info("Constructing search parameters for APHRC")
             params = {
                 'types': 'institutions',
                 'src': 'kwd',
@@ -100,10 +113,13 @@ class ResearchNexusScraper:
                 'limit': 25  # Maximum allowed by the site
             }
             
+            logger.info(f"Making request to search endpoint with params: {params}")
             response = self._make_request(self.search_url, params=params)
             if response.status_code != 200:
+                logger.error(f"Search endpoint returned status code: {response.status_code}")
                 return publications
 
+            logger.info("Successfully accessed search endpoint")
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Find publication listings
@@ -130,13 +146,16 @@ class ResearchNexusScraper:
     def _parse_publication(self, element: BeautifulSoup) -> Optional[Dict]:
         """Parse a publication element into standardized format."""
         try:
+            logger.debug("Starting to parse publication element")
             # Extract basic information
-            title_elem = element.find(['h1', 'h2', 'h3', 'h4', 'a'], class_='title') or \
+                            title_elem = element.find(['h1', 'h2', 'h3', 'h4', 'a'], class_='title') or \
                         element.find(['h1', 'h2', 'h3', 'h4', 'a'])
             if not title_elem:
+                logger.warning("No title element found in publication")
                 return None
                 
             title = safe_str(title_elem.text.strip())
+            logger.debug(f"Found publication title: {title[:100]}...")
             
             # Extract URL and generate DOI
             url = title_elem.get('href', '') if title_elem.name == 'a' else \
@@ -352,16 +371,20 @@ class ResearchNexusScraper:
     def _make_request(self, url: str, params: Dict = None, method: str = 'get', **kwargs) -> requests.Response:
         """Make an HTTP request with error handling and rate limiting."""
         try:
+            logger.debug(f"Making {method.upper()} request to: {url}")
             kwargs['headers'] = {**self.headers, **kwargs.get('headers', {})}
             if params:
                 kwargs['params'] = params
+                logger.debug(f"Request parameters: {params}")
             
             response = requests.request(method, url, **kwargs)
             response.raise_for_status()
             
             # Basic rate limiting
+            logger.debug("Applying rate limiting delay (1 second)")
             sleep(1)
             
+            logger.debug(f"Request successful: {response.status_code}")
             return response
             
         except requests.RequestException as e:

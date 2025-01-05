@@ -2,330 +2,402 @@ import os
 import logging
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+import json
+import hashlib
 from datetime import datetime
 import re
-import hashlib
-import json
+from time import sleep
+from urllib.parse import urljoin
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
+from ai_services_api.services.data.openalex.text_processor import safe_str, truncate_text
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class KnowhubScraper:
-    def __init__(self):
-        """Initialize KnowhubScraper with DSpace repository configuration."""
-        # Base URL configuration
-        self.base_url = os.getenv('KNOWHUB_BASE_URL', "https://knowhub.aphrc.org")
-        self.handle_url = os.getenv(
-            'KNOWHUB_HANDLE_URL', 
-            f"{self.base_url}/handle/123456789/1602"
-        )
+    def __init__(self, summarizer: Optional[TextSummarizer] = None):
+        """Initialize KnowhubScraper with authentication capabilities."""
+        self.base_url = os.getenv('KNOWHUB_BASE_URL', 'https://knowhub.aphrc.org')
+        self.login_url = f"{self.base_url}/login"
+        self.publications_url = f"{self.base_url}/handle/123456789/1602"
         
-        # Authentication configuration
-        self.username = os.getenv('KNOWHUB_USERNAME')
-        self.password = os.getenv('KNOWHUB_PASSWORD')
+        # Authentication credentials
+        self.email = os.getenv('KNOWHUB_EMAIL', 'briankimu97@gmail.com')
+        self.password = os.getenv('KNOWHUB_PASSWORD', 'Rooney10!')
         
-        # Session for persistent authentication
+        # Initialize session for maintaining login state
         self.session = requests.Session()
-        
-        # Tracking to prevent duplicates
-        self.seen_handles = set()
-        self.seen_dois = set()
-        self.seen_titles = set()
-        
-        # DSpace metadata field mappings
-        self.metadata_mappings = {
-            'title': ['dc.title'],
-            'authors': ['dc.contributor.author', 'dc.creator'],
-            'date': ['dc.date.issued', 'dc.date.available'],
-            'abstract': ['dc.description.abstract', 'dc.description'],
-            'keywords': ['dc.subject', 'dc.subject.keywords'],
-            'doi': ['dc.identifier.doi'],
-            'type': ['dc.type'],
-            'journal': ['dc.source', 'dc.publisher.journal'],
-            'citation': ['dc.identifier.citation'],
-            'language': ['dc.language.iso'],
-            'publisher': ['dc.publisher']
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         }
+        self.session.headers.update(self.headers)
+        
+        # Initialize summarizer
+        self.summarizer = summarizer or TextSummarizer()
+        
+        # Track seen publications
+        self.seen_handles = set()
+        
+        logger.info("KnowhubScraper initialized")
 
-    def _authenticate(self) -> bool:
-        """
-        Handle DSpace repository authentication.
-        
-        Returns:
-            bool: Authentication success status
-        """
-        if not self.username or not self.password:
-            logger.warning("Knowhub credentials not configured")
-            return False
-        
-        login_url = f"{self.base_url}/password-login"
-        
+    def _login(self) -> bool:
+        """Authenticate with Knowhub DSpace."""
         try:
+            logger.info("Attempting to login to Knowhub...")
+            
+            # First get the login page to extract CSRF token
+            response = self.session.get(self.login_url)
+            if response.status_code != 200:
+                logger.error(f"Failed to access login page: {response.status_code}")
+                return False
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find login form and extract necessary tokens
+            login_form = soup.find('form', {'action': re.compile(r'/login')})
+            if not login_form:
+                logger.error("Login form not found")
+                return False
+            
+            # Extract CSRF token and other hidden fields
+            hidden_fields = {}
+            for hidden in login_form.find_all('input', type='hidden'):
+                hidden_fields[hidden.get('name')] = hidden.get('value')
+            
             # Prepare login data
             login_data = {
-                'login_email': self.username,
-                'login_password': self.password,
-                'submit': 'Sign in'
+                'email': self.email,
+                'password': self.password,
+                **hidden_fields
             }
             
             # Attempt login
-            response = self.session.post(login_url, data=login_data)
+            login_response = self.session.post(
+                self.login_url,
+                data=login_data,
+                allow_redirects=True
+            )
             
-            # Check authentication success
-            if response.status_code == 200 and 'Welcome' in response.text:
-                logger.info("Successfully authenticated with Knowhub")
+            # Verify login success
+            if login_response.status_code == 200 and 'login' not in login_response.url.lower():
+                logger.info("Successfully logged in to Knowhub")
                 return True
-            
-            logger.warning("Authentication failed")
-            return False
-        
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return False
-
-    def _generate_synthetic_doi(self, publication_data: Dict) -> str:
-        """
-        Generate a synthetic DOI for publications without a native DOI.
-        
-        Args:
-            publication_data (Dict): Publication metadata
-        
-        Returns:
-            str: Synthetic DOI
-        """
-        try:
-            # Create a unique hash based on multiple attributes
-            unique_string = f"{publication_data.get('title', '')}|" \
-                            f"{';'.join(publication_data.get('authors', []))}"
-            
-            # Use SHA-256 to create a consistent hash
-            hash_object = hashlib.sha256(unique_string.encode())
-            hash_digest = hash_object.hexdigest()[:16]
-            
-            # Create a synthetic DOI with a unique prefix
-            synthetic_doi = f"10.0000/knowhub-{hash_digest}"
-            
-            return synthetic_doi
-        except Exception as e:
-            logger.error(f"Error generating synthetic DOI: {e}")
-            return f"10.0000/random-{hashlib.md5(unique_string.encode()).hexdigest()[:16]}"
-
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """
-        Parse date string into datetime object with multiple format support.
-        
-        Args:
-            date_str (str): Date string to parse
-        
-        Returns:
-            Optional[datetime]: Parsed datetime or None
-        """
-        if not date_str:
-            return None
-        
-        # Date parsing formats
-        date_formats = [
-            '%Y-%m-%d',  # 2023-01-15
-            '%d %B %Y',  # 15 January 2023
-            '%B %d, %Y',  # January 15, 2023
-            '%Y/%m/%d',  # 2023/01/15
-            '%Y-%m',     # 2023-01
-            '%Y'         # 2023
-        ]
-        
-        date_str = date_str.strip()
-        
-        for fmt in date_formats:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        
-        # Extract year if no full date match
-        year_match = re.search(r'\d{4}', date_str)
-        if year_match:
-            return datetime(int(year_match.group(0)), 1, 1)
-        
-        return None
-
-    def _extract_metadata(self, soup: BeautifulSoup) -> Dict:
-        """
-        Extract metadata using DSpace-specific metadata fields.
-        
-        Args:
-            soup (BeautifulSoup): Parsed HTML soup
-        
-        Returns:
-            Dict: Extracted metadata
-        """
-        metadata = {}
-        
-        # Find metadata tables
-        metadata_tables = soup.select('table.detailtable, div.ds-table-responsive table')
-        
-        for table in metadata_tables:
-            rows = table.select('tr')
-            
-            for row in rows:
-                try:
-                    label_elem = row.select_one('td.label-cell, td.label, th.label-cell')
-                    value_elem = row.select_one('td.word-break, td:not(.label-cell)')
-                    
-                    if not label_elem or not value_elem:
-                        continue
-                    
-                    label_text = label_elem.text.strip().lower()
-                    value_text = value_elem.text.strip()
-                    
-                    # Check against metadata mappings
-                    for key, mapping_fields in self.metadata_mappings.items():
-                        for field in mapping_fields:
-                            if field.lower() in label_text:
-                                if key in ['authors', 'keywords']:
-                                    # Split multiple values
-                                    values = [v.strip() for v in value_text.split(';') if v.strip()]
-                                    metadata[key] = list(dict.fromkeys(metadata.get(key, []) + values))
-                                else:
-                                    metadata[key] = value_text
+            else:
+                logger.error("Login failed")
+                return False
                 
-                except Exception as e:
-                    logger.error(f"Error processing metadata row: {e}")
-        
-        # Attempt to extract DOI from text if not found
-        if not metadata.get('doi'):
-            doi_match = re.search(r'10.\d{4,9}/[-._;()/:\w]+', metadata.get('abstract', ''))
-            if doi_match:
-                metadata['doi'] = doi_match.group(0)
-        
-        return metadata
+        except Exception as e:
+            logger.error(f"Login error: {e}")
+            return False
 
-    def _parse_publication(self, publication_element) -> Optional[Dict]:
-        """
-        Parse a publication item into a standardized dictionary.
-        
-        Args:
-            publication_element: Publication HTML element
-        
-        Returns:
-            Optional[Dict]: Parsed publication metadata
-        """
+    def fetch_publications(self, limit: int = 10) -> List[Dict]:
+        """Fetch publications from Knowhub DSpace."""
+        publications = []
         try:
-            # Find publication URL and title
-            title_elem = publication_element.select_one('a')
+            # Ensure we're logged in
+            if not self._login():
+                logger.error("Failed to authenticate with Knowhub")
+                return publications
+            
+            logger.info(f"Starting to fetch up to {limit} publications from Knowhub")
+            
+            # Access the publications page
+            response = self.session.get(self.publications_url)
+            if response.status_code != 200:
+                logger.error(f"Failed to access publications page: {response.status_code}")
+                return publications
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find publication listings
+            pub_items = soup.find_all('div', class_=['ds-artifact-item', 'item-wrapper'])
+            total_items = len(pub_items)
+            logger.info(f"Found {total_items} publication items")
+            
+            for i, item in enumerate(pub_items[:limit], 1):
+                try:
+                    logger.info(f"Processing publication {i}/{min(total_items, limit)}")
+                    publication = self._parse_publication(item)
+                    
+                    if publication and publication['identifiers'].get('handle') not in self.seen_handles:
+                        logger.info(f"Successfully parsed: {publication['title'][:100]}...")
+                        publications.append(publication)
+                        self.seen_handles.add(publication['identifiers']['handle'])
+                        
+                        if len(publications) >= limit:
+                            logger.info(f"Reached desired limit of {limit} publications")
+                            break
+                            
+                except Exception as e:
+                    logger.error(f"Error processing publication item: {e}")
+                    continue
+            
+            return publications
+            
+        except Exception as e:
+            logger.error(f"Error fetching publications: {e}")
+            return publications
+
+    def _parse_publication(self, element: BeautifulSoup) -> Optional[Dict]:
+        """Parse a DSpace publication element."""
+        try:
+            # Extract title and URL
+            title_elem = element.find(['h4', 'h3', 'h2'], class_=['artifact-title', 'item-title']) or \
+                        element.find('a', class_='item-title')
+            
             if not title_elem:
+                logger.warning("No title element found")
                 return None
             
-            title = title_elem.text.strip()
+            title = safe_str(title_elem.text.strip())
+            logger.debug(f"Found title: {title[:100]}...")
             
-            # Skip if title already seen
-            if title in self.seen_titles:
-                return None
+            # Get URL and handle
+            url = None
+            handle = None
+            link = title_elem.find('a') if title_elem.name != 'a' else title_elem
+            if link:
+                url = urljoin(self.base_url, link.get('href', ''))
+                handle_match = re.search(r'handle/([0-9/]+)', url)
+                if handle_match:
+                    handle = handle_match.group(1)
             
-            # Get publication URL
-            url = title_elem.get('href', '')
-            if not url.startswith('http'):
-                url = self.base_url + url
-            
-            # Extract handle
-            handle = url.split('handle/')[-1] if 'handle' in url else ''
-            
-            # Skip if handle already seen
-            if handle in self.seen_handles:
-                return None
-            
-            # Fetch detailed page
-            try:
-                response = self.session.get(url)
-                response.raise_for_status()
-                detail_soup = BeautifulSoup(response.text, 'html.parser')
-            except Exception as e:
-                logger.error(f"Error fetching detail page {url}: {e}")
+            if not handle:
+                logger.warning("No handle found for publication")
                 return None
             
             # Extract metadata
-            metadata = self._extract_metadata(detail_soup)
+            metadata = self._extract_metadata(element)
             
-            # Generate DOI if not present
-            doi = metadata.get('doi', '')
-            if not doi:
-                doi = self._generate_synthetic_doi(metadata)
+            # Generate summary
+            abstract = metadata.get('abstract', '')
+            try:
+                summary = self._generate_summary(title, abstract)
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
+                summary = abstract or f"Publication about {title}"
             
-            # Prepare publication dictionary
+            # Create tags
+            tags = []
+            
+            # Add authors as tags
+            for author in metadata.get('authors', []):
+                tags.append({
+                    'name': author,
+                    'tag_type': 'author',
+                    'additional_metadata': json.dumps({
+                        'source': 'knowhub',
+                        'affiliation': 'APHRC'
+                    })
+                })
+            
+            # Add keywords as tags
+            for keyword in metadata.get('keywords', []):
+                tags.append({
+                    'name': keyword,
+                    'tag_type': 'domain',
+                    'additional_metadata': json.dumps({
+                        'source': 'knowhub',
+                        'type': 'keyword'
+                    })
+                })
+            
+            # Add publication type tag
+            pub_type = metadata.get('type', 'other')
+            tags.append({
+                'name': pub_type,
+                'tag_type': 'publication_type',
+                'additional_metadata': json.dumps({
+                    'source': 'knowhub',
+                    'original_type': pub_type
+                })
+            })
+            
+            # Construct publication record
             publication = {
+                'doi': metadata.get('doi'),
                 'title': title,
+                'abstract': abstract or f"Publication about {title}",
+                'summary': summary,
                 'authors': metadata.get('authors', []),
-                'date': self._parse_date(metadata.get('date', '')),
-                'abstract': metadata.get('abstract', ''),
-                'keywords': metadata.get('keywords', []),
-                'url': url,
-                'doi': doi,
-                'handle': handle,
-                'journal': metadata.get('journal', ''),
-                'document_type': metadata.get('type', ''),
-                'source': 'knowhub'
+                'description': abstract or f"Publication about {title}",
+                'expert_id': None,
+                'type': pub_type,
+                'subtitles': json.dumps({}),
+                'publishers': json.dumps({
+                    'name': 'APHRC',
+                    'url': self.base_url,
+                    'type': 'repository'
+                }),
+                'collection': 'knowhub',
+                'date_issue': metadata.get('date'),
+                'citation': metadata.get('citation'),
+                'language': metadata.get('language', 'en'),
+                'identifiers': json.dumps({
+                    'doi': metadata.get('doi'),
+                    'handle': handle,
+                    'url': url,
+                    'source_id': f"knowhub-{handle.replace('/', '-')}",
+                    'keywords': metadata.get('keywords', [])
+                }),
+                'source': 'knowhub',
+                'tags': tags
             }
-            
-            # Mark as seen to prevent duplicates
-            self.seen_handles.add(handle)
-            self.seen_titles.add(title)
-            self.seen_dois.add(doi)
             
             return publication
             
         except Exception as e:
-            logger.error(f"Error parsing publication: {e}")
+            logger.error(f"Error parsing publication element: {e}")
             return None
 
-    def fetch_publications(self, limit: int = 10) -> List[Dict]:
-        """
-        Fetch publications from Knowhub repository.
-        
-        Args:
-            limit (int, optional): Maximum number of publications to fetch
-        
-        Returns:
-            List[Dict]: List of publication dictionaries
-        """
-        # Authenticate first
-        if not self._authenticate():
-            logger.error("Authentication failed. Cannot fetch publications.")
-            return []
-        
-        publications = []
+    def _extract_metadata(self, element: BeautifulSoup) -> Dict:
+        """Extract metadata from publication element."""
+        metadata = {
+            'authors': [],
+            'keywords': [],
+            'type': 'other',
+            'date': None,
+            'doi': None,
+            'citation': None,
+            'language': 'en',
+            'abstract': ''
+        }
         
         try:
-            # Fetch repository page
-            response = self.session.get(self.handle_url)
-            response.raise_for_status()
+            # Find metadata section
+            meta_div = element.find('div', class_=['item-metadata', 'artifact-info'])
+            if not meta_div:
+                return metadata
             
-            # Parse HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Extract authors
+            author_elems = meta_div.find_all('span', class_=['author', 'creator'])
+            metadata['authors'] = [
+                author.text.strip()
+                for author in author_elems
+                if author.text.strip()
+            ]
             
-            # Find publication elements
-            publication_elements = soup.select('div.artifact-title')
+            # Extract date
+            date_elem = meta_div.find('span', class_=['date', 'issued'])
+            if date_elem:
+                date_str = date_elem.text.strip()
+                metadata['date'] = self._parse_date(date_str)
             
-            # Process publications
-            for element in publication_elements[:limit]:
-                pub = self._parse_publication(element)
-                
-                if pub:
-                    publications.append(pub)
-                    
-                    if len(publications) >= limit:
-                        break
-        
+            # Extract type
+            type_elem = meta_div.find('span', class_=['type', 'resourcetype'])
+            if type_elem:
+                metadata['type'] = self._normalize_publication_type(type_elem.text.strip())
+            
+            # Extract DOI
+            doi_elem = meta_div.find('span', class_='doi')
+            if doi_elem:
+                doi_match = re.search(r'10\.\d{4,}/\S+', doi_elem.text)
+                if doi_match:
+                    metadata['doi'] = doi_match.group(0)
+            
+            # Extract keywords
+            keyword_elems = meta_div.find_all('span', class_=['subject', 'keyword'])
+            metadata['keywords'] = [
+                kw.text.strip()
+                for kw in keyword_elems
+                if kw.text.strip()
+            ]
+            
+            # Extract abstract
+            abstract_elem = meta_div.find('span', class_=['abstract', 'description'])
+            if abstract_elem:
+                metadata['abstract'] = safe_str(abstract_elem.text.strip())
+            
+            return metadata
+            
         except Exception as e:
-            logger.error(f"Error fetching publications: {e}")
+            logger.error(f"Error extracting metadata: {e}")
+            return metadata
+
+    def _normalize_publication_type(self, type_str: str) -> str:
+        """Normalize publication type strings."""
+        type_mapping = {
+            'article': 'journal_article',
+            'journal article': 'journal_article',
+            'research article': 'journal_article',
+            'review': 'review_article',
+            'book': 'book',
+            'book chapter': 'book_chapter',
+            'conference': 'conference_paper',
+            'proceedings': 'conference_proceedings',
+            'report': 'report',
+            'technical report': 'technical_report',
+            'working paper': 'working_paper',
+            'thesis': 'thesis',
+            'dissertation': 'dissertation',
+            'policy brief': 'policy_brief',
+            'data': 'dataset'
+        }
         
-        return publications
+        type_str = type_str.lower().strip()
+        return type_mapping.get(type_str, 'other')
+
+    def _parse_date(self, date_str: str) -> Optional[str]:
+        """Parse date string into ISO format."""
+        if not date_str:
+            return None
+            
+        try:
+            # Try common DSpace date formats
+            formats = [
+                '%Y-%m-%d',
+                '%Y/%m/%d',
+                '%B %d, %Y',
+                '%d %B %Y',
+                '%Y'
+            ]
+            
+            for fmt in formats:
+                try:
+                    date = datetime.strptime(date_str.strip(), fmt)
+                    return date.strftime('%Y-%m-%d')
+                except ValueError:
+                    continue
+            
+            # Try to extract year if full date parsing fails
+            year_match = re.search(r'\d{4}', date_str)
+            if year_match:
+                return f"{year_match.group(0)}-01-01"
+            
+            return None
+            
+        except Exception:
+            return None
+
+    def _generate_summary(self, title: str, abstract: str) -> str:
+        """Generate a summary using the TextSummarizer."""
+        try:
+            title = truncate_text(title, max_length=200)
+            abstract = truncate_text(abstract, max_length=1000)
+            try:
+                summary = self.summarizer.summarize(title, abstract)
+                return truncate_text(summary, max_length=500)
+            except Exception as e:
+                logger.error(f"Summary generation error: {e}")
+                return abstract if abstract else f"Publication about {title}"
+        except Exception as e:
+            logger.error(f"Error in summary generation: {e}")
+            return title
 
     def close(self):
-        """
-        Close session and cleanup resources.
-        """
-        self.session.close()
+        """Close resources and perform cleanup."""
+        try:
+            if hasattr(self.summarizer, 'close'):
+                self.summarizer.close()
+            
+            if hasattr(self, 'session'):
+                self.session.close()
+            
+            self.seen_handles.clear()
+            
+            logger.info("KnowhubScraper resources cleaned up")
+        except Exception as e:
+            logger.error(f"Error closing KnowhubScraper: {e}")
