@@ -1,7 +1,9 @@
+# ===============================
 # Builder Stage
+# ===============================
 FROM python:3.11-slim as builder
 
-# Install system dependencies
+# System Dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -12,34 +14,35 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
+# Poetry Installation
 RUN pip install --upgrade pip && \
     pip install poetry && \
     poetry config virtualenvs.create false
 
-# Copy dependency files
+# Project Dependencies
 COPY pyproject.toml poetry.lock ./
-
-# Install dependencies (including dev dependencies for testing)
 RUN poetry install --with dev
 
-# Install additional Python packages
+# Additional Python Packages
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install sentence-transformers && \
     pip install faiss-cpu==1.9.0.post1 && \
-    pip install apache-airflow==2.7.3 \
-    apache-airflow-providers-celery==3.3.1 \
-    apache-airflow-providers-postgres==5.6.0 \
-    apache-airflow-providers-redis==3.3.1 \
-    apache-airflow-providers-http==4.1.0 \
-    apache-airflow-providers-common-sql==1.10.0 \
-    croniter==2.0.1 \
-    cryptography==42.0.0
+    pip install \
+        apache-airflow==2.7.3 \
+        apache-airflow-providers-celery==3.3.1 \
+        apache-airflow-providers-postgres==5.6.0 \
+        apache-airflow-providers-redis==3.3.1 \
+        apache-airflow-providers-http==4.1.0 \
+        apache-airflow-providers-common-sql==1.10.0 \
+        croniter==2.0.1 \
+        cryptography==42.0.0
 
-# Final Stage 
+# ===============================
+# Final Stage
+# ===============================
 FROM python:3.11-slim
 
-# Install system dependencies
+# System Dependencies
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     libomp-dev \
@@ -51,11 +54,11 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
-# Create user and group
+# User and Group Setup
 RUN groupadd -g 1001 appgroup && \
     useradd -u 1000 -g appgroup -s /bin/bash -m appuser
 
-# Create all required directories
+# Directory Structure
 RUN mkdir -p \
     /code/ai_services_api/services/search/models \
     /code/logs \
@@ -67,38 +70,39 @@ RUN mkdir -p \
     /code/scripts \
     /code/tests
 
-# Set permissions
+# Permissions
 RUN chown -R appuser:appgroup /code && \
     chown -R appuser:appgroup /opt/airflow && \
     chmod -R 775 /code && \
     chmod -R 775 /opt/airflow
 
-# Set working directory
+# Working Directory
 WORKDIR /code
 
-# Copy Python packages from builder
+# Copy Dependencies
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application files
+# Application Files
 COPY --chown=appuser:appgroup . .
-
-# Make scripts executable
 RUN chmod +x /code/scripts/init-script.sh
 
-# Set environment variables
+# Environment Variables
 ENV TRANSFORMERS_CACHE=/code/cache \
     HF_HOME=/code/cache \
     AIRFLOW_HOME=/opt/airflow \
     PYTHONPATH=/code \
     TESTING=false
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health Check
+HEALTHCHECK --interval=30s \
+            --timeout=10s \
+            --start-period=60s \
+            --retries=3 \
+            CMD curl -f http://localhost:8000/health || exit 1
 
-# Switch to non-root user
+# User Switch
 USER appuser
 
-# Default command (can be overridden in docker-compose)
+# Default Command
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
