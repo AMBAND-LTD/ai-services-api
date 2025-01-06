@@ -28,7 +28,7 @@ class ResearchNexusScraper:
     
     def __init__(self, summarizer: Optional[TextSummarizer] = None):
         """Initialize scraper without starting Chrome."""
-        self.summarizer = summarizer or TextSummarizer()
+        self.summarizer = summarizer or TextSummarizer()search_term
         self.seen_dois = set()
         self.publication_counter = Counter()
         # Don't initialize Chrome components yet
@@ -39,31 +39,41 @@ class ResearchNexusScraper:
 
     def _initialize_chrome_if_needed(self):
         try:
-            # Verbose logging
-            logger.info(f"Chrome Binary: {os.environ.get('CHROME_BIN', 'Not Set')}")
-            logger.info(f"ChromeDriver Path: {os.environ.get('CHROMEDRIVER_PATH', 'Not Set')}")
-            logger.info(f"Chrome Flags: {os.environ.get('CHROME_FLAGS', 'Not Set')}")
-            
-            # Verify file existence
+            # Verbose logging of environment and paths
             chrome_binary = os.environ.get('CHROME_BIN', '/usr/bin/chromium')
             chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+            chrome_flags = os.environ.get('CHROME_FLAGS', '').split()
             
-            if not os.path.exists(chrome_binary):
-                raise FileNotFoundError(f"Chrome binary not found at {chrome_binary}")
+            logger.info(f"Chrome Binary: {chrome_binary}")
+            logger.info(f"ChromeDriver Path: {chromedriver_path}")
+            logger.info(f"Chrome Flags: {chrome_flags}")
             
-            if not os.path.exists(chromedriver_path):
-                raise FileNotFoundError(f"ChromeDriver not found at {chromedriver_path}")
+            # Validate binary and driver existence
+            for path, name in [(chrome_binary, 'Chrome'), (chromedriver_path, 'ChromeDriver')]:
+                if not os.path.exists(path):
+                    logger.error(f"{name} not found at {path}")
+                    raise FileNotFoundError(f"{name} binary not found")
+                if not os.access(path, os.X_OK):
+                    logger.error(f"{name} not executable at {path}")
+                    raise PermissionError(f"{name} not executable")
             
-            # Add explicit permission check
-            if not os.access(chrome_binary, os.X_OK):
-                raise PermissionError(f"Chrome binary is not executable at {chrome_binary}")
+            # Configure Chrome options
+            self.chrome_options = Options()
+            for flag in chrome_flags:
+                self.chrome_options.add_argument(flag)
             
-            if not os.access(chromedriver_path, os.X_OK):
-                raise PermissionError(f"ChromeDriver is not executable at {chromedriver_path}")
+            # Add headless and window size options
+            self.chrome_options.add_argument('--headless')
+            self.chrome_options.add_argument('--window-size=1920,1080')
             
-            # Rest of existing initialization code...
+            # Initialize service and driver with detailed logging
+            self.service = Service(executable_path=chromedriver_path)
+            self.driver = webdriver.Chrome(service=self.service, options=self.chrome_options)
+            
+            logger.info("Chrome initialized successfully")
+            
         except Exception as e:
-            logger.error(f"Detailed Chrome initialization error: {e}")
+            logger.error(f"Chrome initialization failed: {e}")
             raise
     # Rest of the code remains the same
     def fetch_content(self, limit: int = 10, search_term: str = "aphrc") -> List[Dict]:
@@ -76,7 +86,7 @@ class ResearchNexusScraper:
             self._initialize_chrome_if_needed()
             
             # Navigate to search page
-            self.driver.get('https://research-nexus.net/search')
+            self.driver.get('https://research-nexus.net/research/')
             logger.info(f"Starting search for term: {search_term}")
             
             # Perform search

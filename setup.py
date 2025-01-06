@@ -137,7 +137,7 @@ async def process_data(args):
             try:
                 logger.info("Processing KnowHub publications...")
                 knowhub_scraper = KnowhubScraper()
-                knowhub_publications = knowhub_scraper.fetch_content(limit=10)
+                knowhub_publications = knowhub_scraper.fetch_publications(limit=10)
                 for pub in knowhub_publications:
                     pub_processor.process_single_work(pub, source='knowhub')
                 knowhub_scraper.close()

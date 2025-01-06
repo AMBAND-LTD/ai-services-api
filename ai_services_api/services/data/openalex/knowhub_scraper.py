@@ -120,14 +120,14 @@ class KnowhubScraper:
                 logger.warning("No title element found")
                 return None
             
-            title = safe_str(title_elem.text.strip())
+            title = safe_str(title_elem.get_text().strip() if hasattr(title_elem, 'get_text') else str(title_elem).strip())
             logger.debug(f"Found title: {title[:100]}...")
             
             # Get URL and handle
             url = None
             handle = None
-            link = title_elem.find('a') if title_elem.name != 'a' else title_elem
-            if link:
+            link = title_elem.find('a') if hasattr(title_elem, 'find') else title_elem
+            if hasattr(link, 'get'):
                 url = urljoin(self.base_url, link.get('href', ''))
                 handle_match = re.search(r'handle/([0-9/]+)', url)
                 if handle_match:
