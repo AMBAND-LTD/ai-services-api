@@ -1,0 +1,160 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    command: bash -c "/code/scripts/start-xvfb.sh && /code/scripts/init-script.sh"
+    volumes:
+      - ./:/code:rw
+      - ./logs/api:/code/logs:rw
+      - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
+      - ./cache:/code/cache:rw
+      - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
+      - /dev/shm:/dev/shm
+      - type: tmpfs
+        target: /code/.initialization_complete
+        tmpfs:
+          size: 1M
+          mode: 0777
+    environment: 
+      - REDIS_URL=redis://redis:6379
+      - NEO4J_URI=bolt://neo4j:7687
+      - DEBUG=True
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-aphrc}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - DOCKER_ENV=true
+      - TRANSFORMERS_CACHE=/code/cache
+      - HF_HOME=/code/cache
+      - MODEL_PATH=/code/models/search
+      - BASE_DIR=/code
+      - SKIP_OPENALEX=${SKIP_OPENALEX:-false}
+      - SKIP_PUBLICATIONS=${SKIP_PUBLICATIONS:-false}
+      - SKIP_GRAPH=${SKIP_GRAPH:-false}
+      - SKIP_SEARCH=${SKIP_SEARCH:-false}
+      - SKIP_REDIS=${SKIP_REDIS:-false}
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/chromium
+      - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+      - PYTHONUNBUFFERED=1
+    user: "${UID:-1001}:${GID:-125}"
+    security_opt:
+      - seccomp=unconfined
+    shm_size: 2g
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - aphrc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 50s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+    env_file:
+      - .env
+    restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # [Previous redis service configuration remains the same]
+  redis:
+    image: redis:latest
+    container_name: redis-standalone
+    hostname: redis
+    restart: always
+    networks:
+      - aphrc-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./logs/redis:/var/log/redis:rw
+    command: redis-server --appendonly yes --loglevel notice --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      - REDIS_MAXMEMORY=256mb
+      - REDIS_MAXMEMORY_POLICY=allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # [Previous neo4j service configuration remains the same]
+  neo4j:
+    image: neo4j:5.12.0
+    container_name: neo4j
+    user: "${UID:-1001}:${GID:-125}"
+    hostname: neo4j
+    restart: always
+    networks:
+      - aphrc-network
+    ports:
+      - "7474:7474" 
+      - "7687:7687"
+    entrypoint: ["bash", "-c", "sleep 10 && /startup/docker-entrypoint.sh neo4j"]
+    environment:
+      NEO4J_AUTH: none
+      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_dbms_transaction_timeout: 300s
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_dbms_security_procedures_allowlist: "apoc.*"
+      NEO4J_server_directories_logs: /logs
+      NEO4J_db_transaction_timeout: 300s
+    volumes:
+      - neo4j-data:/data
+      - ./logs/neo4j:/logs:rw
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
+      interval: 60s
+      timeout: 45s
+      retries: 5
+      start_period: 300s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 2G
+
+  # [Rest of the services remain the same]
+
+networks:
+  aphrc-network:
+    name: aphrc-network
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  neo4j-data:

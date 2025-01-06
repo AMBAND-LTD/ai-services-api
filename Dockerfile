@@ -1,6 +1,6 @@
-# ===============================
-# Builder Stage
-# ===============================
+# =============================== 
+# Builder Stage 
+# =============================== 
 FROM python:3.11-slim as builder
 
 # System Dependencies
@@ -35,11 +35,13 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
         apache-airflow-providers-http==4.1.0 \
         apache-airflow-providers-common-sql==1.10.0 \
         croniter==2.0.1 \
-        cryptography==42.0.0
+        cryptography==42.0.0 \
+        selenium==4.15.2 \
+        webdriver_manager==4.0.1
 
-# ===============================
-# Final Stage
-# ===============================
+# =============================== 
+# Final Stage 
+# =============================== 
 FROM python:3.11-slim
 
 # System Dependencies
@@ -52,6 +54,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     chromium \
     chromium-driver \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # User and Group Setup
@@ -92,7 +95,14 @@ ENV TRANSFORMERS_CACHE=/code/cache \
     HF_HOME=/code/cache \
     AIRFLOW_HOME=/opt/airflow \
     PYTHONPATH=/code \
-    TESTING=false
+    TESTING=false \
+    DISPLAY=:99 \
+    CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver
+
+# Xvfb setup
+RUN echo 'Xvfb :99 -screen 0 1024x768x16 &' > /code/scripts/start-xvfb.sh && \
+    chmod +x /code/scripts/start-xvfb.sh
 
 # Health Check
 HEALTHCHECK --interval=30s \
@@ -105,4 +115,4 @@ HEALTHCHECK --interval=30s \
 USER appuser
 
 # Default Command
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["/bin/bash", "-c", "/code/scripts/start-xvfb.sh && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"]
