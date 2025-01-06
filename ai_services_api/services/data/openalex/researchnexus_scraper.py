@@ -28,7 +28,7 @@ class ResearchNexusScraper:
     
     def __init__(self, summarizer: Optional[TextSummarizer] = None):
         """Initialize scraper without starting Chrome."""
-        self.summarizer = summarizer or TextSummarizer()search_term
+        self.summarizer = summarizer or TextSummarizer()
         self.seen_dois = set()
         self.publication_counter = Counter()
         # Don't initialize Chrome components yet
