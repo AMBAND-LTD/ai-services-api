@@ -14,7 +14,9 @@ services:
       - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
-      - /dev/shm:/dev/shm
+      - /dev/shm:/dev/shm:rw
+      - /tmp/chrome-data:/tmp/chrome-data:rw
+      - /var/run/chrome:/var/run/chrome:rw
       
     environment: 
       - REDIS_URL=redis://redis:6379
@@ -41,8 +43,11 @@ services:
       - CHROME_BIN=/usr/bin/chromium
       - CHROME_BINARY=/usr/bin/chromium
       - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+      - CHROME_TMPDIR=/tmp/chrome-data
+      - CHROME_PATH=/usr/bin/chromium
+      - CHROME_FLAGS=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-crashpad --disable-crash-reporter --disable-software-rasterizer
       - PYTHONUNBUFFERED=1
-    user: "${UID:-1001}:${GID:-125}"
+    user: "1001:125"
     security_opt:
       - seccomp=unconfined
     shm_size: 3g
