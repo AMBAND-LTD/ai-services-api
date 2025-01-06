@@ -15,6 +15,7 @@ services:
       - ./cache:/code/cache:rw
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
       - /dev/shm:/dev/shm
+      
     environment: 
       - REDIS_URL=redis://redis:6379
       - NEO4J_URI=bolt://neo4j:7687
@@ -38,12 +39,13 @@ services:
       - SKIP_SEARCH=${SKIP_SEARCH:-false}
       - SKIP_REDIS=${SKIP_REDIS:-false}
       - CHROME_BIN=/usr/bin/chromium
+      - CHROME_BINARY=/usr/bin/chromium
       - CHROMEDRIVER_PATH=/usr/bin/chromedriver
       - PYTHONUNBUFFERED=1
     user: "${UID:-1001}:${GID:-125}"
     security_opt:
       - seccomp=unconfined
-    shm_size: 2g
+    shm_size: 3g
     cap_add:
       - SYS_ADMIN
     depends_on:

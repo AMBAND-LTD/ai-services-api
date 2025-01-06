@@ -1,3 +1,4 @@
+
 import os
 import logging
 import argparse
@@ -99,15 +100,12 @@ def initialize_graph():
 
 async def process_data(args):
     """Process experts and publications data from multiple sources."""
-    # Initialize processors and scrapers
+    # Initialize OpenAlex since it's always needed and doesn't have heavy dependencies
     processor = OpenAlexProcessor()
-    orcid_processor = OrcidProcessor()
-    knowhub_scraper = KnowhubScraper()
-    website_scraper = WebsiteScraper()
-    research_nexus_scraper = ResearchNexusScraper()
+    summarizer = TextSummarizer()
     
     try:
-        # Process expert data
+        # Process expert data first
         logger.info("Loading initial expert data...")
         await processor.load_initial_experts(args.expertise_csv)
         
@@ -118,70 +116,53 @@ async def process_data(args):
         
         if not args.skip_publications:
             logger.info("Processing publications data...")
-            summarizer = TextSummarizer()
             pub_processor = PublicationProcessor(processor.db, summarizer)
             
-            # Process publications from different sources
-            sources = [
-                ('OpenAlex', processor, 'openalex'),
-                ('ORCID', orcid_processor, 'orcid'),
-                ('Knowhub', knowhub_scraper, 'knowhub'),
-                ('Website', website_scraper, 'website'),
-                ('Research Nexus', research_nexus_scraper, 'researchnexus')
-            ]
-            
-            for name, source_processor, source_name in sources:
+            # Process each source separately to handle failures gracefully
+            if not args.skip_openalex:
                 try:
-                    logger.info(f"Processing {name} publications...")
-                    
-                    if source_name in ['openalex', 'orcid']:
-                        await source_processor.process_publications(pub_processor, source=source_name)
-                    elif source_name == 'knowhub':
-                        # Knowhub specific processing
-                        knowhub_publications = source_processor.fetch_publications(limit=10)
-                        for i, publication in enumerate(knowhub_publications):
-                            if i >= 10:
-                                break
-                            pub_processor.process_single_work(publication, source=source_name)
-                    elif source_name == 'website':
-                        try:
-                            # Website scraper processing
-                            website_publications = source_processor.fetch_content(limit=10)
-                            for publication in website_publications:
-                                try:
-                                    # Process each publication
-                                    pub_processor.process_single_work(publication, source=source_name)
-                                except Exception as e:
-                                    logger.error(f"Error processing website publication: {e}")
-                                    continue
-                        except Exception as e:
-                            logger.error(f"Error fetching website content: {e}")
-                    elif source_name == 'researchnexus':
-                        # Research Nexus processing
-                        research_nexus_publications = source_processor.fetch_content(limit=10)
-                        if research_nexus_publications:
-                            for i, publication in enumerate(research_nexus_publications):
-                                if i >= 10:
-                                    break
-                                pub_processor.process_single_work(publication, source=source_name)
-                    
-                    logger.info(f"{name} Publications processing complete!")
-                
+                    logger.info("Processing OpenAlex publications...")
+                    await processor.process_publications(pub_processor, source='openalex')
                 except Exception as e:
-                    logger.error(f"Error processing {name} publications: {e}")
-                    continue
-        
+                    logger.error(f"Error processing OpenAlex publications: {e}")
+
+            try:
+                logger.info("Processing ORCID publications...")
+                orcid_processor = OrcidProcessor()
+                await orcid_processor.process_publications(pub_processor, source='orcid')
+                orcid_processor.close()
+            except Exception as e:
+                logger.error(f"Error processing ORCID publications: {e}")
+
+            try:
+                logger.info("Processing KnowHub publications...")
+                knowhub_scraper = KnowhubScraper()
+                knowhub_publications = knowhub_scraper.fetch_content(limit=10)
+                for pub in knowhub_publications:
+                    pub_processor.process_single_work(pub, source='knowhub')
+                knowhub_scraper.close()
+            except Exception as e:
+                logger.error(f"Error processing KnowHub publications: {e}")
+
+            # ResearchNexus is handled separately due to Selenium dependency
+            try:
+                logger.info("Processing Research Nexus publications...")
+                research_nexus_scraper = ResearchNexusScraper(summarizer=summarizer)
+                research_nexus_publications = research_nexus_scraper.fetch_content(limit=10)
+                if research_nexus_publications:
+                    for pub in research_nexus_publications:
+                        pub_processor.process_single_work(pub, source='researchnexus')
+            except Exception as e:
+                logger.error(f"Error processing Research Nexus publications: {e}")
+            finally:
+                if 'research_nexus_scraper' in locals():
+                    research_nexus_scraper.close()
+
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise
     finally:
-        # Ensure all resources are closed
         processor.close()
-        orcid_processor.close()
-        knowhub_scraper.close()
-        website_scraper.close()
-        research_nexus_scraper.close()
-
 def create_search_index():
     """Create FAISS search index."""
     index_creator = ExpertSearchIndexManager()

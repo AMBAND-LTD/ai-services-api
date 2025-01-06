@@ -1,18 +1,47 @@
-# =============================== 
-# Builder Stage 
-# =============================== 
-FROM python:3.11-slim as builder
+# ===============================
+# Builder Stage
+# ===============================
+FROM python:3.11-slim AS builder
 
-# System Dependencies
+# Install System Dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
     curl \
     wget \
+    unzip \
+    build-essential \
     libpq-dev \
     gcc \
     python3-dev \
     postgresql-client \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libnspr4 \
+    libnss3 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Chromium
+RUN apt-get update && apt-get install -y chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fetch the Latest ChromeDriver Version
+RUN export CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
+    && wget -q https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip \
+    && unzip chromedriver_linux64.zip \
+    && mv chromedriver /usr/bin/chromedriver \
+    && chmod +x /usr/bin/chromedriver \
+    && rm chromedriver_linux64.zip
 
 # Poetry Installation
 RUN pip install --upgrade pip && \
@@ -37,22 +66,33 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
         croniter==2.0.1 \
         cryptography==42.0.0
 
-# =============================== 
-# Final Stage 
-# =============================== 
+# ===============================
+# Final Stage
+# ===============================
 FROM python:3.11-slim
 
-# System Dependencies
+# Install System Dependencies
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     libomp-dev \
     curl \
+    wget \
+    unzip \
     redis-tools \
     netcat-openbsd \
-    wget \
-    chromium \
-    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Chromium
+RUN apt-get update && apt-get install -y chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fetch and Install ChromeDriver
+RUN export CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
+    && wget -q https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip \
+    && unzip chromedriver_linux64.zip \
+    && mv chromedriver /usr/bin/chromedriver \
+    && chmod +x /usr/bin/chromedriver \
+    && rm chromedriver_linux64.zip
 
 # User and Group Setup
 RUN groupadd -g 1001 appgroup && \
@@ -84,8 +124,11 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Application Files
-COPY --chown=appuser:appgroup . .
+COPY --chown=appuser:appgroup . . 
 RUN chmod +x /code/scripts/init-script.sh
+
+# Set Chrome flags
+ENV CHROME_FLAGS="--headless --no-sandbox --disable-dev-shm-usage --remote-debugging-pipe --disable-extensions"
 
 # Environment Variables
 ENV TRANSFORMERS_CACHE=/code/cache \
