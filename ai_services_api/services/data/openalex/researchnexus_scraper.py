@@ -43,8 +43,25 @@ class ResearchNexusScraper:
         self.chrome_options = None
         self.service = None
         self.temp_dir = None
+        self._prepare_directories()
         self._check_system_info()
         logger.info("ResearchNexusScraper initialized without Chrome")
+
+    def _prepare_directories(self):
+        """Prepare necessary directories with proper permissions."""
+        directories = [
+            os.environ.get('CHROME_TMPDIR', '/tmp/chrome-data'),
+            os.environ.get('CHROME_PROFILE_DIR', '/tmp/chrome-profile'),
+            '/var/run/chrome'
+        ]
+        
+        for directory in directories:
+            try:
+                os.makedirs(directory, exist_ok=True)
+                os.chmod(directory, 0o1777)  # Set permissions to drwxrwxrwt
+                logger.debug(f"Prepared directory: {directory} with permissions: {oct(os.stat(directory).st_mode)[-4:]}")
+            except Exception as e:
+                logger.error(f"Error preparing directory {directory}: {str(e)}")
 
     def _check_system_info(self):
         """Log system information for debugging."""
@@ -53,6 +70,19 @@ class ResearchNexusScraper:
         logger.info(f"Running as user: {os.getuid()}:{os.getgid()}")
         logger.info(f"Current working directory: {os.getcwd()}")
         logger.info(f"Temp directory: {tempfile.gettempdir()}")
+
+        # Check Chrome-related directories
+        chrome_dirs = {
+            'CHROME_TMPDIR': os.environ.get('CHROME_TMPDIR', '/tmp/chrome-data'),
+            'CHROME_PROFILE_DIR': os.environ.get('CHROME_PROFILE_DIR', '/tmp/chrome-profile'),
+            'Chrome binary dir': os.path.dirname(os.environ.get('CHROME_BIN', '/usr/bin/chromium'))
+        }
+
+        for name, path in chrome_dirs.items():
+            if os.path.exists(path):
+                logger.info(f"{name} exists with permissions: {oct(os.stat(path).st_mode)[-4:]}")
+            else:
+                logger.warning(f"{name} does not exist: {path}")
 
     def _get_free_port(self) -> int:
         """Get a free port for Chrome remote debugging."""
@@ -84,6 +114,8 @@ class ResearchNexusScraper:
             '--disable-setuid-sandbox',
             '--disable-crashpad',
             '--disable-crash-reporter',
+            '--no-first-run',
+            '--password-store=basic',
             '--disable-infobars',
             '--disable-notifications',
             '--enable-automation',
@@ -92,23 +124,25 @@ class ResearchNexusScraper:
             '--mute-audio'
         ]
 
+        # Add Chrome profile directory configuration
+        profile_dir = os.environ.get('CHROME_PROFILE_DIR', '/tmp/chrome-profile')
+        if os.path.exists(profile_dir):
+            stability_flags.extend([
+                f'--user-data-dir={profile_dir}',
+                '--profile-directory=Scraping'
+            ])
+            logger.debug(f"Using Chrome profile directory: {profile_dir}")
+        else:
+            logger.warning(f"Chrome profile directory does not exist: {profile_dir}")
+
         # Combine environment flags with stability flags
         all_flags = list(set(stability_flags + env_flags))
         
         for flag in all_flags:
             options.add_argument(flag)
-
-        # Configure Chrome temp directory
-        chrome_tmp = os.environ.get('CHROME_TMPDIR', '/tmp/chrome-data')
-        if not os.path.exists(chrome_tmp):
-            os.makedirs(chrome_tmp, exist_ok=True)
-        
-        options.add_argument(f'--user-data-dir={chrome_tmp}')
         
         # Log all Chrome options and directory permissions
         logger.debug(f"Chrome options configured: {options.arguments}")
-        logger.debug(f"Chrome temp directory: {chrome_tmp}")
-        logger.debug(f"Chrome temp directory permissions: {oct(os.stat(chrome_tmp).st_mode)[-3:]}")
         
         return options
 
@@ -124,8 +158,8 @@ class ResearchNexusScraper:
             logger.info(f"ChromeDriver version: {chromedriver_version}")
             
             # Check binary permissions
-            chrome_perms = oct(os.stat(chrome_binary).st_mode)[-3:]
-            chromedriver_perms = oct(os.stat(chromedriver_path).st_mode)[-3:]
+            chrome_perms = oct(os.stat(chrome_binary).st_mode)[-4:]
+            chromedriver_perms = oct(os.stat(chromedriver_path).st_mode)[-4:]
             
             logger.debug(f"Chrome binary permissions: {chrome_perms}")
             logger.debug(f"ChromeDriver permissions: {chromedriver_perms}")
@@ -439,7 +473,7 @@ class ResearchNexusScraper:
                 finally:
                     self.driver = None
             
-            # Clean up temp directories
+            # Clean up temp directories while preserving profile
             temp_dirs = [
                 self.temp_dir,
                 os.environ.get('CHROME_TMPDIR'),

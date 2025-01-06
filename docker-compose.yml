@@ -15,8 +15,9 @@ services:
       - ./cache:/code/cache:rw
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
       - /dev/shm:/dev/shm:rw
-      - /tmp/chrome-data:/tmp/chrome-data:rw
-      - /var/run/chrome:/var/run/chrome:rw
+      - chrome_data:/tmp/chrome-data
+      - chrome_profile:/tmp/chrome-profile
+      - chrome_run:/var/run/chrome
       
     environment: 
       - REDIS_URL=redis://redis:6379
@@ -44,8 +45,7 @@ services:
       - CHROME_BINARY=/usr/bin/chromium
       - CHROMEDRIVER_PATH=/usr/bin/chromedriver
       - CHROME_TMPDIR=/tmp/chrome-data
-      - CHROME_PATH=/usr/bin/chromium
-      - CHROME_FLAGS=--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-crashpad --disable-crash-reporter --disable-software-rasterizer
+      - CHROME_PROFILE_DIR=/tmp/chrome-profile
       - PYTHONUNBUFFERED=1
     user: "1001:125"
     security_opt:
@@ -78,6 +78,7 @@ services:
         reservations:
           memory: 1G
 
+  # Other services remain the same...
   redis:
     image: redis:latest
     container_name: redis-standalone
@@ -110,7 +111,7 @@ services:
   neo4j:
     image: neo4j:5.12.0
     container_name: neo4j
-    user: "${UID:-1001}:${GID:-125}"
+    user: "1001:125"
     hostname: neo4j
     restart: always
     networks:
@@ -176,195 +177,6 @@ services:
         reservations:
           memory: 256M
 
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
-    restart: always
-    networks:
-      - aphrc-network
-    environment:
-      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-brianp0stgres97@gmail.com}"
-      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-p0stgres}" 
-    ports:
-      - "5050:80"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-        reservations:
-          memory: 128M
-
-  dashboard:
-    build: . 
-    ports:
-      - "8501:8501"
-    command: streamlit run /code/ai_services_api/services/analytics/app.py --server.headless true
-    volumes:
-      - ./:/code:rw
-      - ./logs/dashboard:/code/logs:rw
-    environment: 
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=${POSTGRES_DB:-aphrc}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
-      - DOCKER_ENV=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - aphrc-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
-      interval: 50s
-      timeout: 10s
-      retries: 3
-      start_period: 100s
-    user: "${UID:-1001}:${GID:-125}"
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-
-  airflow-webserver:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: airflow webserver
-    ports:
-      - "8080:8080"
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
-      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
-      - AIRFLOW_HOME=/opt/airflow
-      - PYTHONPATH=/code
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/logs:/opt/airflow/logs
-      - ./airflow/plugins:/opt/airflow/plugins
-      - ./:/code:ro
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    networks:
-      - aphrc-network
-    restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
-  airflow-scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: airflow scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
-      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - AIRFLOW_HOME=/opt/airflow
-      - PYTHONPATH=/code
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/logs:/opt/airflow/logs
-      - ./airflow/plugins:/opt/airflow/plugins
-      - ./:/code:ro
-    depends_on:
-      - airflow-webserver
-    networks:
-      - aphrc-network
-    restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 1G
-
-  airflow-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: bash -c "rm -f /opt/airflow/airflow-worker.pid && airflow celery worker"
-    working_dir: /opt/airflow
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
-      - AIRFLOW__CELERY__WORKER_CONCURRENCY=4  
-      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
-      - AIRFLOW_HOME=/opt/airflow
-      - PYTHONPATH=/code
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/logs:/opt/airflow/logs
-      - ./airflow/plugins:/opt/airflow/plugins
-      - ./:/code:ro
-    depends_on:
-      - airflow-scheduler
-    networks:
-      - aphrc-network
-    restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 1G
-
-  airflow-init:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: >
-      bash -c '
-        sleep 10 &&
-        airflow db init &&
-        airflow db migrate &&
-        airflow users create --username brian --firstname kimutai --lastname kimu --role Admin --email briankimu97@gmail.com --password movie
-      '
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres/${POSTGRES_DB:-aphrc}
-      - AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
-      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - AIRFLOW_HOME=/opt/airflow
-    user: "0:0"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - aphrc-network
-
 networks:
   aphrc-network:
     name: aphrc-network
@@ -374,3 +186,6 @@ volumes:
   postgres-data:
   redis-data:
   neo4j-data:
+  chrome_data:
+  chrome_profile:
+  chrome_run:

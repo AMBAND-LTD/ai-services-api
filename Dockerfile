@@ -37,9 +37,6 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix tmp permissions
-RUN chmod 1777 /tmp
-
 # Poetry Installation
 RUN pip install --upgrade pip && \
     pip install poetry && \
@@ -82,19 +79,14 @@ RUN apt-get update && apt-get install -y \
     libx11-6 \
     && rm -rf /var/lib/apt/lists/*
 
-# User and Group Setup with non-unique IDs
-RUN groupadd --non-unique -g 125 appgroup && \
-    useradd --non-unique -u 1001 -g appgroup -s /bin/bash -m appuser && \
-    usermod -aG root,appgroup appuser
+# User and Group Setup with explicit IDs
+RUN groupadd -g 125 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/bash -m appuser
 
-# Chrome directories and permissions setup
-RUN mkdir -p /tmp/chrome-data /var/run/chrome && \
-    chown -R 1001:125 /tmp/chrome-data /var/run/chrome && \
-    chmod -R 1777 /tmp/chrome-data /var/run/chrome
-
-# Fix permissions
-RUN chmod 1777 /tmp && \
-    chown -R 1001:125 /tmp
+# Create and set permissions for Chrome directories
+RUN mkdir -p /tmp/chrome-data /tmp/chrome-profile /var/run/chrome && \
+    chown -R 1001:125 /tmp/chrome-data /tmp/chrome-profile /var/run/chrome && \
+    chmod -R 1777 /tmp/chrome-data /tmp/chrome-profile /var/run/chrome
 
 # Chrome sandbox setup
 RUN chown root:root /usr/bin/chromium && \
@@ -112,11 +104,9 @@ RUN mkdir -p \
     /code/scripts \
     /code/tests
 
-# Permissions for application directories
-RUN chown -R 1001:125 /code && \
-    chown -R 1001:125 /opt/airflow && \
-    chmod -R 775 /code && \
-    chmod -R 775 /opt/airflow
+# Set permissions for application directories
+RUN chown -R 1001:125 /code /opt/airflow && \
+    chmod -R 775 /code /opt/airflow
 
 # Working Directory
 WORKDIR /code
@@ -130,7 +120,7 @@ COPY --chown=1001:125 . .
 RUN chmod +x /code/scripts/init-script.sh
 
 # Set Chrome flags
-ENV CHROME_FLAGS="--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-crashpad --disable-crash-reporter --disable-software-rasterizer --remote-debugging-port=9222"
+ENV CHROME_FLAGS="--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-crashpad --disable-crash-reporter --no-first-run --test-type --disable-software-rasterizer --disable-default-apps --disable-setuid-sandbox --remote-debugging-port=9222"
 
 # Environment Variables
 ENV TRANSFORMERS_CACHE=/code/cache \
@@ -140,7 +130,8 @@ ENV TRANSFORMERS_CACHE=/code/cache \
     TESTING=false \
     CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver \
-    CHROME_TMPDIR=/tmp/chrome-data
+    CHROME_TMPDIR=/tmp/chrome-data \
+    CHROME_PROFILE_DIR=/tmp/chrome-profile
 
 # Health Check
 HEALTHCHECK --interval=30s \
