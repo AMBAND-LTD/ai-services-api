@@ -13,6 +13,7 @@ services:
       - ./logs/api:/code/logs:rw
       - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
+      - ./scripts/start-xvfb.sh:/code/scripts/start-xvfb.sh:ro
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
       - /dev/shm:/dev/shm
       - type: tmpfs

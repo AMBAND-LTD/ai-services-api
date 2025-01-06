@@ -21,7 +21,7 @@ RUN pip install --upgrade pip && \
 
 # Project Dependencies
 COPY pyproject.toml poetry.lock ./
-RUN poetry install --with dev
+RUN poetry install --with dev --no-root
 
 # Additional Python Packages
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
@@ -88,6 +88,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Application Files
 COPY --chown=appuser:appgroup . .
+RUN chmod +x /code/scripts/start-xvfb.sh
 RUN chmod +x /code/scripts/init-script.sh
 
 # Environment Variables
