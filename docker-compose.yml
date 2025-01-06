@@ -7,20 +7,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    command: bash -c "/code/scripts/start-xvfb.sh && /code/scripts/init-script.sh"
+    command: bash /code/scripts/init-script.sh
     volumes:
       - ./:/code:rw
       - ./logs/api:/code/logs:rw
       - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
-      - ./scripts/start-xvfb.sh:/code/scripts/start-xvfb.sh:ro
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
       - /dev/shm:/dev/shm
-      - type: tmpfs
-        target: /code/.initialization_complete
-        tmpfs:
-          size: 1M
-          mode: 0777
     environment: 
       - REDIS_URL=redis://redis:6379
       - NEO4J_URI=bolt://neo4j:7687
@@ -43,7 +37,6 @@ services:
       - SKIP_GRAPH=${SKIP_GRAPH:-false}
       - SKIP_SEARCH=${SKIP_SEARCH:-false}
       - SKIP_REDIS=${SKIP_REDIS:-false}
-      - DISPLAY=:99
       - CHROME_BIN=/usr/bin/chromium
       - CHROMEDRIVER_PATH=/usr/bin/chromedriver
       - PYTHONUNBUFFERED=1
