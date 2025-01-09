@@ -22,6 +22,13 @@ class KnowhubScraper:
         self.base_url = os.getenv('KNOWHUB_BASE_URL', 'https://knowhub.aphrc.org')
         self.publications_url = f"{self.base_url}/handle/123456789/1"
         
+        # Add additional endpoints while preserving original
+        self.endpoints = {
+            'working_documents': f"{self.base_url}/handle/123456789/2",
+            'reports': f"{self.base_url}/handle/123456789/3",
+            'multimedia': f"{self.base_url}/handle/123456789/4"
+        }
+        
         # Request headers
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -36,6 +43,7 @@ class KnowhubScraper:
         
         logger.info("KnowhubScraper initialized")
         logger.info(f"Using publications URL: {self.publications_url}")
+        logger.info(f"Additional endpoints: {', '.join(self.endpoints.keys())}")
 
     def fetch_publications(self, limit: int = 10) -> List[Dict]:
         """Fetch publications from Knowhub."""
@@ -178,6 +186,77 @@ class KnowhubScraper:
         except Exception as e:
             logger.error(f"Error in fetch_publications: {str(e)}", exc_info=True)
             return publications
+    def fetch_additional_content(self, content_type: str, limit: int = 2) -> List[Dict]:
+        """Fetch content from additional endpoints while preserving original functionality."""
+        if content_type not in self.endpoints:
+            logger.error(f"Invalid content type: {content_type}")
+            return []
+            
+        url = self.endpoints[content_type]
+        logger.info(f"Fetching {content_type} from: {url}")
+
+        try:
+            # Use existing request and parsing logic
+            response = self._make_request(url)
+            if response.status_code != 200:
+                logger.error(f"Failed to access {content_type} page: {response.status_code}")
+                return []
+                
+            soup = BeautifulSoup(response.text, 'html.parser')
+            items = soup.find_all(['div', 'article'], class_=['ds-artifact-item', 'item-wrapper', 'row artifact-description'])
+            
+            results = []
+            for i, item in enumerate(items[:limit], 1):
+                try:
+                    content = self._parse_publication(item)
+                    if not content:
+                        continue
+                        
+                    # Add content type to identifiers
+                    identifiers = json.loads(content['identifiers'])
+                    identifiers['content_type'] = content_type
+                    content['identifiers'] = json.dumps(identifiers)
+                    
+                    # Add content type to tags
+                    content['tags'].append({
+                        'name': content_type,
+                        'tag_type': 'content_type',
+                        'additional_metadata': json.dumps({
+                            'source': 'knowhub',
+                            'type': content_type
+                        })
+                    })
+                    
+                    results.append(content)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {content_type} item {i}: {str(e)}")
+                    continue
+                    
+                if len(results) >= limit:
+                    break
+                    
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error fetching {content_type}: {str(e)}")
+            return []
+
+    def fetch_all_content(self, limit: int = 2) -> Dict[str, List[Dict]]:
+        """Fetch content from all endpoints including original publications."""
+        all_content = {}
+        
+        # Fetch from original publications endpoint
+        logger.info("Fetching from original publications endpoint...")
+        all_content['publications'] = self.fetch_publications(limit=limit)
+        
+        # Fetch from additional endpoints
+        for content_type in self.endpoints:
+            logger.info(f"Fetching from {content_type} endpoint...")
+            content = self.fetch_additional_content(content_type, limit=limit)
+            all_content[content_type] = content
+            
+        return all_content
 
     def _parse_publication(self, element: BeautifulSoup) -> Optional[Dict]:
         """Parse a DSpace publication element with enhanced error handling and logging."""

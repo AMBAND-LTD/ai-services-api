@@ -100,7 +100,6 @@ def initialize_graph():
 
 async def process_data(args):
     """Process experts and publications data from multiple sources."""
-    # Initialize OpenAlex since it's always needed and doesn't have heavy dependencies
     processor = OpenAlexProcessor()
     summarizer = TextSummarizer()
     
@@ -118,7 +117,7 @@ async def process_data(args):
             logger.info("Processing publications data...")
             pub_processor = PublicationProcessor(processor.db, summarizer)
             
-            # Process each source separately to handle failures gracefully
+            # Process OpenAlex publications
             if not args.skip_openalex:
                 try:
                     logger.info("Processing OpenAlex publications...")
@@ -126,6 +125,7 @@ async def process_data(args):
                 except Exception as e:
                     logger.error(f"Error processing OpenAlex publications: {e}")
 
+            # Process ORCID publications
             try:
                 logger.info("Processing ORCID publications...")
                 orcid_processor = OrcidProcessor()
@@ -134,21 +134,42 @@ async def process_data(args):
             except Exception as e:
                 logger.error(f"Error processing ORCID publications: {e}")
 
+            # Process KnowHub content
             try:
-                logger.info("Processing KnowHub publications...")
-                knowhub_scraper = KnowhubScraper()
-                knowhub_publications = knowhub_scraper.fetch_publications(limit=10)
-                for pub in knowhub_publications:
-                    pub_processor.process_single_work(pub, source='knowhub')
+                logger.info("\n" + "="*50)
+                logger.info("Processing KnowHub content...")
+                logger.info("="*50)
+                
+                knowhub_scraper = KnowhubScraper(summarizer=summarizer)
+                all_content = knowhub_scraper.fetch_all_content(limit=2)  # Fetch 2 items from each endpoint
+                
+                for content_type, items in all_content.items():
+                    if items:
+                        logger.info(f"\nProcessing {len(items)} items from {content_type}")
+                        for item in items:
+                            try:
+                                pub_processor.process_single_work(item, source='knowhub')
+                                logger.info(f"Successfully processed {content_type} item: {item.get('title', 'Unknown Title')}")
+                            except Exception as e:
+                                logger.error(f"Error processing {content_type} item: {e}")
+                                continue
+                    else:
+                        logger.warning(f"No items found for {content_type}")
+                
                 knowhub_scraper.close()
+                logger.info("\nKnowHub content processing complete!")
+                
             except Exception as e:
-                logger.error(f"Error processing KnowHub publications: {e}")
+                logger.error(f"Error processing KnowHub content: {e}")
+            finally:
+                if 'knowhub_scraper' in locals():
+                    knowhub_scraper.close()
 
-            # ResearchNexus is handled separately due to Selenium dependency
+            # Process ResearchNexus publications
             try:
                 logger.info("Processing Research Nexus publications...")
                 research_nexus_scraper = ResearchNexusScraper(summarizer=summarizer)
-                research_nexus_publications = research_nexus_scraper.fetch_content(limit=10)
+                research_nexus_publications = research_nexus_scraper.fetch_content(limit=2)  # Reduced to 2 for testing
 
                 if research_nexus_publications:
                     for pub in research_nexus_publications:
@@ -162,14 +183,14 @@ async def process_data(args):
                 if 'research_nexus_scraper' in locals():
                     research_nexus_scraper.close()
 
-            # Website scraper
+            # Process Website publications
             try:
                 logger.info("\n" + "="*50)
                 logger.info("Processing Website publications...")
                 logger.info("="*50)
                 
                 website_scraper = WebsiteScraper(summarizer=summarizer)
-                website_publications = website_scraper.fetch_content(limit=10)
+                website_publications = website_scraper.fetch_content(limit=2)  # Reduced to 2 for testing
                 
                 if website_publications:
                     logger.info(f"\nProcessing {len(website_publications)} website publications")
