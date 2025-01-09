@@ -149,9 +149,13 @@ async def process_data(args):
                 logger.info("Processing Research Nexus publications...")
                 research_nexus_scraper = ResearchNexusScraper(summarizer=summarizer)
                 research_nexus_publications = research_nexus_scraper.fetch_content(limit=10)
+
                 if research_nexus_publications:
                     for pub in research_nexus_publications:
                         pub_processor.process_single_work(pub, source='researchnexus')
+                else:
+                    logger.warning("No Research Nexus publications found")
+
             except Exception as e:
                 logger.error(f"Error processing Research Nexus publications: {e}")
             finally:
