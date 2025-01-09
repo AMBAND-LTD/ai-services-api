@@ -209,24 +209,15 @@ def create_tables():
             """
             CREATE TABLE IF NOT EXISTS resources_resource (
                 id SERIAL PRIMARY KEY,
-                doi VARCHAR(255),
                 title TEXT NOT NULL,
-                abstract TEXT,
-                summary TEXT,
+                doi VARCHAR(255) UNIQUE,
                 authors TEXT[],
-                description TEXT,
-                expert_id INTEGER,
-                type VARCHAR(100),
-                subtitles JSONB,
-                publishers JSONB,
-                collection VARCHAR(255),
-                date_issue VARCHAR(255),
-                citation VARCHAR(255),
-                language VARCHAR(255),
-                identifiers JSONB,
-                source VARCHAR(50),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                domains TEXT[],
+                type VARCHAR(50) DEFAULT 'publication',
+                publication_year INTEGER,
+                summary TEXT,
+                source VARCHAR(50) DEFAULT 'openalex',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
             """,
 

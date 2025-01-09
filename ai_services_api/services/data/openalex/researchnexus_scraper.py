@@ -239,12 +239,25 @@ class ResearchNexusScraper:
         try:
             self._initialize_chrome_if_needed()
             
+            # Construct the proper search URL with parameters
+            search_url = (
+                f"https://research-nexus.net/research/"
+                f"?kwd={search_term}"
+                "&stp=broad"
+                "&yrl=2000"
+                "&yrh=2025"
+                "&limit=25"
+                "&sort=score_desc"
+            )
+            
+            logger.info(f"Accessing search URL: {search_url}")
+            
             # Navigate to search page with retry logic
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    self.driver.get('https://research-nexus.net/search')
-                    logger.info(f"Searching for term: {search_term}")
+                    self.driver.get(search_url)
+                    logger.info(f"Successfully loaded search results for: {search_term}")
                     break
                 except Exception as e:
                     if attempt == max_retries - 1:
@@ -252,20 +265,17 @@ class ResearchNexusScraper:
                     logger.warning(f"Navigation attempt {attempt + 1} failed: {str(e)}")
                     time.sleep(2)
             
-            # Perform search
-            search_input = WebDriverWait(self.driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='search']"))
+            # Wait for results to load
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".search-results"))
             )
-            search_input.clear()
-            search_input.send_keys(search_term)
-            search_input.send_keys(Keys.RETURN)
-            time.sleep(5)
             
             # Process results with timeout handling
             while len(publications) < limit:
                 try:
+                    # Updated selector for publication elements
                     pub_elements = WebDriverWait(self.driver, 20).until(
-                        EC.presence_of_all_elements_located((By.CLASS_NAME, "ar-search-result"))
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".search-results > div"))
                     )
                     
                     if not pub_elements:
@@ -277,17 +287,60 @@ class ResearchNexusScraper:
                             break
                             
                         try:
-                            publication = self._extract_publication(element)
-                            if publication:
-                                publications.append(publication)
-                                logger.info(f"Processed: {publication['title'][:100]}")
+                            # Extract title
+                            title = element.find_element(By.CSS_SELECTOR, "h3").text.strip()
+                            
+                            # Extract abstract/description
+                            abstract = element.find_element(By.CSS_SELECTOR, "p").text.strip()
+                            
+                            # Extract metadata (citations, study locations, etc.)
+                            metadata_elements = element.find_elements(By.CSS_SELECTOR, ".meta-info span")
+                            metadata_text = " • ".join([elem.text for elem in metadata_elements])
+                            
+                            doi = self._generate_doi(title)
+                            if doi in self.seen_dois:
+                                continue
+
+                            # Create publication record
+                            publication = {
+                                'title': safe_str(title),
+                                'abstract': safe_str(abstract),
+                                'doi': doi,
+                                'source': 'researchnexus',
+                                'scrape_date': datetime.now().isoformat(),
+                                **self._extract_metadata(metadata_text)
+                            }
+                            
+                            # Generate summary
+                            if publication['abstract']:
+                                try:
+                                    publication['summary'] = self.summarizer.summarize(
+                                        publication['title'],
+                                        publication['abstract']
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Summary generation failed: {str(e)}")
+                                    publication['summary'] = f"Publication about {publication['title']}"
+                            
+                            publications.append(publication)
+                            self.seen_dois.add(doi)
+                            logger.info(f"Processed: {title[:100]}")
+                            
                         except Exception as e:
                             logger.error(f"Error processing publication: {str(e)}")
                             continue
                     
-                    if len(publications) < limit and not self._load_more_results():
+                    # Check if we have a "Load more" button
+                    try:
+                        load_more = self.driver.find_element(By.CSS_SELECTOR, ".load-more-results")
+                        if load_more.is_displayed() and load_more.is_enabled():
+                            load_more.click()
+                            time.sleep(3)  # Wait for new results
+                        else:
+                            break
+                    except NoSuchElementException:
                         break
-                    
+                        
                 except TimeoutException:
                     logger.warning("Timeout while processing results")
                     break
@@ -303,7 +356,6 @@ class ResearchNexusScraper:
             self._log_processing_statistics(start_time, len(publications), limit)
             
         return publications
-
     def _extract_publication(self, element) -> Optional[Dict]:
         """Extract publication data with enhanced error handling."""
         try:

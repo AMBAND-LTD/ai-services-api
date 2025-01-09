@@ -8,6 +8,7 @@ import json  # Add at the top of both files
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
+import uuid
 
 logging.basicConfig(
     level=logging.INFO,
@@ -117,6 +118,7 @@ class OrcidProcessor:
                     fetched_works = await self._fetch_expert_publications(
                         session, 
                         expert['orcid'],
+                        expert,  # Pass the expert dictionary
                         per_page=min(5, max_publications - publication_count)
                     )
                     
@@ -125,8 +127,8 @@ class OrcidProcessor:
                             if publication_count >= max_publications:
                                 break
                                 
-                            # Convert ORCID work to standard format
-                            work = self._convert_orcid_to_standard_format(work_summary)
+                            # Convert ORCID work to standard format with expert info
+                            work = self._convert_orcid_to_standard_format(work_summary, expert)  # Pass expert here
                             if not work:
                                 continue
                                 
@@ -164,139 +166,143 @@ class OrcidProcessor:
     async def _fetch_expert_publications(
         self, 
         session: aiohttp.ClientSession, 
-        orcid: str, 
+        orcid: str,
+        expert: Dict,
         per_page: int = 5
     ) -> List[Dict]:
-        """
-        Fetch publications for an expert from ORCID.
-        
-        Args:
-            session (aiohttp.ClientSession): Async HTTP session
-            orcid (str): ORCID identifier
-            per_page (int, optional): Number of publications to fetch. Defaults to 5.
-        
-        Returns:
-            List[Dict]: List of publication works
-        """
         try:
-            # Prepare ORCID API request
             clean_orcid = orcid.replace('https://orcid.org/', '')
             url = f"{self.base_url}/{clean_orcid}/works"
-            
             headers = {
-                "Accept": "application/json",
+                "Accept": "application/json", 
                 "Authorization": f"Bearer {self.access_token}"
             }
-            
-            params = {
-                'per-page': per_page
-            }
+            params = {'per-page': per_page}
             
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    
-                    # Convert ORCID works to a format compatible with publication processor
-                    works = []
-                    for group in data.get('group', []):
-                        work_summaries = group.get('work-summary', [])
-                        if not work_summaries:
-                            continue
+                    try:
+                        data = await response.json()
+                        if not isinstance(data, dict):
+                            logger.error(f"Unexpected response format: {type(data)}")
+                            return []
+                            
+                        works = []
+                        for group in data.get('group', []):
+                            if not isinstance(group, dict):
+                                continue
+                                
+                            work_summaries = group.get('work-summary', [])
+                            if not work_summaries or not isinstance(work_summaries, list):
+                                continue
+                            
+                            # Take the first work summary from each group
+                            summary = work_summaries[0]
+                            if not isinstance(summary, dict):
+                                continue
+                                
+                            works.append(summary)
                         
-                        # Take first work summary
-                        summary = work_summaries[0]
-                        
-                        # Convert to standard format
-                        if standardized_work := self._convert_orcid_to_standard_format(summary):
-                            works.append(standardized_work)
-                    
-                    return works
-                
-                elif response.status == 429:  # Rate limit
-                    logger.warning("ORCID API rate limit hit")
-                    return []
+                        return works
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON response: {e}")
+                        return []
                 else:
-                    logger.error(f"Failed to fetch publications: Status {response.status}")
+                    logger.error(f"Failed to fetch works: {response.status}")
                     return []
-        
+                    
         except Exception as e:
             logger.error(f"Error fetching ORCID publications: {e}")
             return []
 
-    def _convert_orcid_to_standard_format(self, work_summary: Dict) -> Optional[Dict]:
-        """Convert ORCID work summary to standard format."""
+    def _convert_orcid_to_standard_format(self, work: Dict, expert: Dict) -> Optional[Dict]:
+        """
+        Convert ORCID work format to standard format.
+        
+        Args:
+            work: Dictionary containing work data from ORCID
+            expert: Dictionary containing expert information
+            
+        Returns:
+            Optional[Dict]: Standardized work data or None if conversion fails
+        """
         try:
-            if not work_summary:
+            # Validate input types
+            if not isinstance(work, dict):
+                logger.error(f"Work must be a dictionary, got {type(work)}")
                 return None
-
-            # Get the title - handle different possible structures
-            title = None
-            if isinstance(work_summary.get('title'), dict):
-                title = work_summary.get('title', {}).get('title', {}).get('value')
-            elif isinstance(work_summary.get('title'), str):
-                title = work_summary.get('title')
                 
-            if not title:
+            if not isinstance(expert, dict):
+                logger.error(f"Expert must be a dictionary, got {type(expert)}")
                 return None
 
-            # Get publication year safely
-            pub_year = None
-            pub_date = work_summary.get('publication-date', {})
-            if isinstance(pub_date, dict):
-                year_data = pub_date.get('year', {})
-                if isinstance(year_data, dict):
-                    pub_year = int(year_data.get('value')) if year_data.get('value') else None
-                elif isinstance(year_data, str):
-                    try:
-                        pub_year = int(year_data)
-                    except (ValueError, TypeError):
-                        pub_year = None
+            # Extract title safely
+            title = ""
+            title_container = work.get('title', {})
+            if isinstance(title_container, dict):
+                title = title_container.get('title', {}).get('value', '')
 
-            # Extract authors safely
-            authorships = []
-            contributors = work_summary.get('contributors', {}).get('contributor', [])
-            if isinstance(contributors, list):
-                for contributor in contributors:
-                    if isinstance(contributor, dict):
-                        credit_name = contributor.get('credit-name', {})
-                        if isinstance(credit_name, dict):
-                            name = credit_name.get('value')
-                        else:
-                            name = str(credit_name) if credit_name else None
+            # Extract publication date safely
+            pub_date = work.get('publication-date', {})
+            year = ""
+            if isinstance(pub_date, dict):
+                year_container = pub_date.get('year', {})
+                if isinstance(year_container, dict):
+                    year = year_container.get('value', '')
+
+            # Extract URL safely
+            url = ""
+            url_container = work.get('url', {})
+            if isinstance(url_container, dict):
+                url = url_container.get('value', '')
+
+            # Extract type safely
+            work_type = work.get('type', '')
+            if not isinstance(work_type, str):
+                work_type = ''
+
+            # Process contributors safely
+            contributors = []
+            contributors_container = work.get('contributors', {})
+            if isinstance(contributors_container, dict):
+                for contributor in contributors_container.get('contributor', []):
+                    if not isinstance(contributor, dict):
+                        continue
                         
+                    credit_name = contributor.get('credit-name', {})
+                    if isinstance(credit_name, dict):
+                        name = credit_name.get('value', '')
                         if name:
-                            authorships.append({
-                                'author': {
-                                    'display_name': name,
-                                    'orcid': contributor.get('contributor-orcid', {}).get('path'),
-                                },
-                                'institutions': [],
-                                'is_corresponding': False
+                            contributors.append({
+                                'name': name,
+                                'role': contributor.get('contributor-attributes', {}).get('contributor-role', '')
                             })
 
-            # Construct work with safe fallbacks
-            work = {
+            # Build response
+            response_data = {
+                'id': str(uuid.uuid4()),
+                'source': 'orcid',
+                'expert_first_name': str(expert.get('first_name', '')),
+                'expert_last_name': str(expert.get('last_name', '')),
+                'expert_orcid': str(expert.get('orcid', '')),
                 'title': title,
-                'doi': self._get_identifier(work_summary, 'doi'),
-                'type': work_summary.get('type', 'unknown'),
-                'publication_year': pub_year,
-                'cited_by_count': 0,  # Default for ORCID
-                'language': work_summary.get('language-code', 'en'),
-                'publisher': None,
-                'journal': None,
-                'host_venue': {
-                    'display_name': work_summary.get('journal-title', {}).get('value') if isinstance(work_summary.get('journal-title'), dict) else None
-                },
-                'authorships': authorships,
-                'abstract_inverted_index': None,
-                'concepts': []
+                'type': work_type,
+                'url': url,
+                'contributors': contributors,
+                'publication_year': year,
+                'journal': work.get('journal-title', {}).get('value', '')
             }
-            
-            logger.info(f"Successfully converted ORCID work: {title}")
-            return work
+
+            # Validate required fields
+            if not response_data['title']:
+                logger.warning("Work missing required title field")
+                return None
+
+            logger.info(f"Successfully converted work: {response_data['title']}")
+            return response_data
 
         except Exception as e:
-            logger.error(f"Error converting ORCID work to standard format: {e}")
+            logger.error(f"Error converting work to standard format: {e}")
             return None
 
     def _get_identifier(self, work_summary: Dict, id_type: str) -> str:

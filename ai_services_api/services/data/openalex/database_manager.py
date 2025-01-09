@@ -85,82 +85,39 @@ class DatabaseManager:
             logger.error(f"Error adding expert {first_name} {last_name}: {e}")
             raise
 
-    # In DatabaseManager class:
-    def add_publication(self, title: str, abstract: str, summary: str, source: str = 'openalex', 
-                    doi: Optional[str] = None, **metadata) -> None:
+    def add_publication(self, doi: str, title: str, summary: str, 
+                       source: str = None, type: str = None,
+                       authors: List[str] = None, domains: List[str] = None,
+                       publication_year: Optional[int] = None) -> None:
         """Add or update a publication in the database."""
         try:
-            if doi:
-                # If DOI exists, use it as primary identifier
-                existing = self.execute("""
-                    SELECT doi FROM resources_resource WHERE doi = %s
-                """, (doi,))
-            else:
-                # If no DOI, check by title
-                existing = self.execute("""
-                    SELECT doi FROM resources_resource WHERE title = %s
-                """, (title,))
+            # Check if the publication already exists
+            existing_publication = self.execute("""
+                SELECT doi FROM resources_resource WHERE doi = %s
+            """, (doi,))
 
-            # Build the complete publication data
-            publication_data = {
-                'doi': doi,
-                'title': title,
-                'abstract': abstract,
-                'summary': summary,
-                'authors': metadata.get('authors', []),
-                'description': metadata.get('description', abstract),
-                'expert_id': metadata.get('expert_id'),
-                'type': metadata.get('type', 'unknown'),
-                'subtitles': metadata.get('subtitles', '{}'),
-                'publishers': metadata.get('publishers', '{}'),
-                'collection': metadata.get('collection', 'default'),
-                'date_issue': metadata.get('date_issue'),
-                'citation': metadata.get('citation'),
-                'language': metadata.get('language', 'en'),
-                'identifiers': metadata.get('identifiers', '{}'),
-                'source': source
-            }
-
-            if existing:
-                # Update existing publication
-                update_query = """
+            if existing_publication:  # If publication exists
+                # Update the existing publication
+                self.execute("""
                     UPDATE resources_resource
-                    SET title = %(title)s,
-                        abstract = %(abstract)s,
-                        summary = %(summary)s,
-                        authors = %(authors)s,
-                        description = %(description)s,
-                        expert_id = %(expert_id)s,
-                        type = %(type)s,
-                        subtitles = %(subtitles)s,
-                        publishers = %(publishers)s,
-                        collection = %(collection)s,
-                        date_issue = %(date_issue)s,
-                        citation = %(citation)s,
-                        language = %(language)s,
-                        identifiers = %(identifiers)s,
-                        source = %(source)s
-                    WHERE {}
-                """.format('doi = %(doi)s' if doi else 'title = %(title)s')
-                
-                self.execute(update_query, publication_data)
-                logger.info(f"Updated publication: {title} (Source: {source})")
+                    SET title = %s,
+                        summary = %s,
+                        source = %s,
+                        type = %s,
+                        authors = %s,
+                        domains = %s,
+                        publication_year = %s
+                    WHERE doi = %s
+                """, (title, summary, source, type, authors, domains, publication_year, doi))
+                logger.info(f"Updated publication: {title}")
             else:
-                # Insert new publication
+                # Insert a new publication
                 self.execute("""
                     INSERT INTO resources_resource 
-                    (doi, title, abstract, summary, authors, description,
-                    expert_id, type, subtitles, publishers, collection,
-                    date_issue, citation, language, identifiers, source)
-                    VALUES (
-                        %(doi)s, %(title)s, %(abstract)s, %(summary)s, %(authors)s,
-                        %(description)s, %(expert_id)s, %(type)s, %(subtitles)s,
-                        %(publishers)s, %(collection)s, %(date_issue)s, %(citation)s,
-                        %(language)s, %(identifiers)s, %(source)s
-                    )
-                """, publication_data)
-                logger.info(f"Added publication: {title} (Source: {source})")
-
+                    (doi, title, summary, source, type, authors, domains, publication_year)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (doi, title, summary, source, type, authors, domains, publication_year))
+                logger.info(f"Added publication: {title}")
         except Exception as e:
             logger.error(f"Error adding/updating publication: {e}")
             raise

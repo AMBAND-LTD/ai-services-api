@@ -158,6 +158,36 @@ async def process_data(args):
                 if 'research_nexus_scraper' in locals():
                     research_nexus_scraper.close()
 
+            # Website scraper
+            try:
+                logger.info("\n" + "="*50)
+                logger.info("Processing Website publications...")
+                logger.info("="*50)
+                
+                website_scraper = WebsiteScraper(summarizer=summarizer)
+                website_publications = website_scraper.fetch_content(limit=10)
+                
+                if website_publications:
+                    logger.info(f"\nProcessing {len(website_publications)} website publications")
+                    for pub in website_publications:
+                        try:
+                            pub_processor.process_single_work(pub, source='website')
+                            logger.info(f"Successfully processed website publication: {pub.get('title', 'Unknown Title')}")
+                        except Exception as e:
+                            logger.error(f"Error processing website publication: {e}")
+                            continue
+                else:
+                    logger.warning("No website publications found")
+                    
+                website_scraper.close()
+                logger.info("\nWebsite publications processing complete!")
+                
+            except Exception as e:
+                logger.error(f"Error processing Website publications: {e}")
+            finally:
+                if 'website_scraper' in locals():
+                    website_scraper.close()
+
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise

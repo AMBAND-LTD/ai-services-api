@@ -1,6 +1,8 @@
 import logging
 import json  # Add at the top of both files
 from typing import Dict, Optional, List, Any
+import uuid
+
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.data.openalex.text_processor import (
@@ -129,19 +131,96 @@ class PublicationProcessor:
     def _clean_and_validate_work(self, work: Dict) -> tuple[Optional[str], Optional[str]]:
         """Clean and validate work data."""
         try:
-            doi = safe_str(work.get('doi'))
-            title = safe_str(work.get('title'))
+            # Get DOI safely
+            doi = None
+            if isinstance(work.get('doi'), str):
+                doi = work.get('doi')
             
-            if not title:
-                logger.warning("Invalid title")
-                return None, None
-
-            # DOI can be None, but title must exist
-            return doi if doi and doi != "N/A" else None, title
+            # Get title safely with defensive chaining
+            title = None
+            title_data = work.get('title', {}) if isinstance(work.get('title'), dict) else work.get('title', '')
+            if isinstance(title_data, dict):
+                title = ((title_data.get('title', {}) or {}).get('value', ''))
+            elif isinstance(title_data, str):
+                title = title_data.strip()
+                
+            return doi, title if title else None
             
         except Exception as e:
-            logger.error(f"Error in work validation: {e}")
+            logger.error(f"Error in clean and validate: {e}")
             return None, None
+
+    def process_orcid_work(self, work: Dict, source: str = 'orcid') -> bool:
+        """Process a single publication work."""
+        try:
+            # Clean and validate work
+            doi, title = self._clean_and_validate_work(work)
+            if not title:  # Title is required, DOI is optional
+                logger.warning("Missing required title, skipping work")
+                return False
+
+            # Process authors with defensive handling
+            authors = []
+            for authorship in (work.get('authorships', []) or []):
+                author = (authorship or {}).get('author', {})
+                if author and isinstance(author, dict):
+                    display_name = author.get('display_name')
+                    if display_name and isinstance(display_name, str):
+                        authors.append(display_name.strip())
+
+            # Process domains/concepts with defensive handling
+            domains = []
+            for concept in (work.get('concepts', []) or []):
+                concept = concept or {}
+                if isinstance(concept, dict):
+                    display_name = concept.get('display_name')
+                    if display_name and isinstance(display_name, str):
+                        domains.append(display_name.strip())
+
+            # Get publication year safely
+            publication_year = None
+            if isinstance(work.get('publication_year'), (int, str)):
+                try:
+                    publication_year = int(work.get('publication_year'))
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid publication year format for {title}")
+
+            # Process abstract for summary generation
+            abstract = work.get('abstract', '')
+            if not abstract and title:
+                logger.info("No abstract available, generating description from title")
+                abstract = f"Publication about {title}"
+
+            # Generate summary
+            summary = None
+            try:
+                if abstract:
+                    logger.info(f"Generating summary for: {title}")
+                    summary = self.summarizer.summarize(title, abstract)
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
+                summary = abstract[:500] if abstract else None
+
+            # Add to database
+            success = self.db.add_publication(
+                title=title,
+                doi=doi,
+                authors=authors,
+                domains=domains,
+                publication_year=publication_year,
+                summary=summary
+            )
+
+            if success:
+                logger.info(f"Successfully processed publication: {title}")
+                return True
+            else:
+                logger.error(f"Failed to add publication to database: {title}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error processing work: {e}")
+            return False
 
     def process_single_work(self, work: Dict, source: str = 'openalex') -> bool:
         """Process a single publication work."""
@@ -149,6 +228,7 @@ class PublicationProcessor:
             # Clean and validate work
             doi, title = self._clean_and_validate_work(work)
             if not title:  # Title is required, DOI is optional
+                logger.info("No title found for work, skipping")
                 return False
 
             # Check if publication exists and has summary
@@ -157,7 +237,7 @@ class PublicationProcessor:
                 logger.info(f"Publication already exists with summary. Skipping.")
                 return False
 
-            # Process abstract
+            # Process abstract for summary generation
             abstract = work.get('abstract', '')
             if not abstract:
                 logger.info("No abstract available, generating description from title")
@@ -173,115 +253,33 @@ class PublicationProcessor:
                     logger.error(f"Error generating summary: {e}")
                     summary = abstract[:500]
 
-            # Extract metadata
-            metadata = self._extract_metadata(work)
+            # Process authors
+            authors = []
+            for authorship in work.get('authorships', []):
+                author = authorship.get('author', {})
+                if author.get('display_name'):
+                    authors.append(author['display_name'])
 
-            try:
-                self.db.execute("BEGIN")
-                
-                # Add main publication record
-                self.db.add_publication(
-                    title=title,
-                    abstract=abstract,
-                    summary=summary,
-                    source=source,
-                    doi=doi,
-                    **metadata
-                )
+            # Process domains/concepts
+            domains = []
+            for concept in work.get('concepts', []):
+                if concept.get('display_name'):
+                    domains.append(concept['display_name'])
 
-                # Process authors as tags if from website
-                if source == 'website' and work.get('tags'):
-                    for tag_info in work['tags']:
-                        try:
-                            tag_id = self.db.add_tag(tag_info)
-                            identifier = doi if doi else title
-                            self.db.link_publication_tag(identifier, tag_id)
-                        except Exception as e:
-                            logger.error(f"Error processing website tag {tag_info.get('name')}: {e}")
-                            continue
+            # Add main publication record with updated method signature
+            self.db.add_publication(
+                title=title,
+                summary=summary,
+                source=source,
+                doi=doi,
+                type='publication',
+                authors=authors,
+                domains=domains,
+                publication_year=work.get('publication_year')
+            )
 
-                # Process authors for non-website sources
-                elif work.get('authorships'):
-                    for authorship in work.get('authorships', []):
-                        try:
-                            author = authorship.get('author', {})
-                            if not author:
-                                continue
-
-                            author_name = author.get('display_name')
-                            if not author_name:
-                                continue
-
-                            tag_info = {
-                                'name': author_name,
-                                'tag_type': 'author',
-                                'additional_metadata': json.dumps({
-                                    'orcid': author.get('orcid'),
-                                    'institutions': [
-                                        aff.get('display_name') 
-                                        for aff in authorship.get('institutions', [])
-                                    ],
-                                    'is_corresponding': authorship.get('is_corresponding', False)
-                                })
-                            }
-                            tag_id = self.db.add_tag(tag_info)
-                            if doi:
-                                self.db.link_publication_tag(doi, tag_id)
-                            else:
-                                self.db.link_publication_tag(title, tag_id)
-
-                        except Exception as e:
-                            logger.error(f"Error processing author tag: {e}")
-
-                    # Process concepts/topics as domain tags
-                    for concept in work.get('concepts', []):
-                        try:
-                            if not concept.get('display_name'):
-                                continue
-
-                            tag_info = {
-                                'name': concept['display_name'],
-                                'tag_type': 'domain',
-                                'additional_metadata': json.dumps({
-                                    'score': concept.get('score'),
-                                    'level': concept.get('level'),
-                                    'wikidata_id': concept.get('wikidata'),
-                                    'source': source
-                                })
-                            }
-                            tag_id = self.db.add_tag(tag_info)
-                            if doi:
-                                self.db.link_publication_tag(doi, tag_id)
-                            else:
-                                self.db.link_publication_tag(title, tag_id)
-
-                        except Exception as e:
-                            logger.error(f"Error processing concept tag: {e}")
-
-                # Add type tag if available
-                if metadata.get('type'):
-                    try:
-                        type_tag_info = {
-                            'name': metadata['type'],
-                            'tag_type': 'publication_type',
-                            'additional_metadata': json.dumps({
-                                'source': source
-                            })
-                        }
-                        tag_id = self.db.add_tag(type_tag_info)
-                        identifier = doi if doi else title
-                        self.db.link_publication_tag(identifier, tag_id)
-                    except Exception as e:
-                        logger.error(f"Error processing type tag: {e}")
-
-                self.db.execute("COMMIT")
-                logger.info(f"Successfully processed publication: {title}")
-                return True
-
-            except Exception as e:
-                self.db.execute("ROLLBACK")
-                logger.error(f"Error in database transaction: {e}")
-                return False
+            logger.info(f"Successfully processed publication: {title}")
+            return True
 
         except Exception as e:
             logger.error(f"Error processing work: {e}")

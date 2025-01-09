@@ -2,19 +2,20 @@ import os
 import logging
 import aiohttp
 import asyncio
+import uuid
+
+import time
 from typing import Dict, List, Optional, Any, Tuple
 from dotenv import load_dotenv
 import pandas as pd
 import psycopg2
 from urllib.parse import urlparse
 import json
-import json  # Add at the top of both files
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 import requests
 from ai_services_api.services.data.openalex.expert_processor import ExpertProcessor
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,51 +55,37 @@ def get_db_connection(dbname=None):
     
     try:
         conn = psycopg2.connect(**params)
-        logger.info(f"Successfully connected to database: {params['dbname']} at {params['host']}")
+        logger.info(f"Connected to database: {params['dbname']}")
         return conn
     except psycopg2.OperationalError as e:
-        logger.error(f"Error connecting to the database: {e}")
+        logger.error(f"Database connection error: {e}")
         raise
 
 class OpenAlexProcessor:
     def __init__(self):
-        """Initialize the OpenAlex processor with necessary components."""
+        """Initialize the OpenAlex processor."""
         try:
-            # Load environment variables
             load_dotenv()
-            
-            # Set up base configuration
             self.base_url = os.getenv('OPENALEX_API_URL', 'https://api.openalex.org')
             self.session = None
-            
-            # Initialize components
             self.db = DatabaseManager()
             self.expert_processor = ExpertProcessor(self.db, self.base_url)
-            logger.info("OpenAlexProcessor initialized successfully")
+            logger.info("OpenAlexProcessor initialized")
         except Exception as e:
-            logger.error(f"Error initializing OpenAlexProcessor: {e}")
+            logger.error(f"Initialization error: {e}")
             raise
-            
-    async def load_initial_experts(self, expertise_csv: str):
-        """Load initial expert data from expertise CSV."""
-        def prepare_array_or_jsonb(data, is_jsonb=False):
-            if isinstance(data, list):
-                return json.dumps(data) if is_jsonb else data
-            elif data:
-                return json.dumps([data]) if is_jsonb else [data]
-            else:
-                return '[]' if is_jsonb else []
 
+    async def load_initial_experts(self, expertise_csv: str):
+        """Load initial expert data from CSV."""
         try:
             if not os.path.exists(expertise_csv):
-                raise FileNotFoundError(f"Expertise CSV file not found: {expertise_csv}")
+                raise FileNotFoundError(f"CSV file not found: {expertise_csv}")
 
-            logger.info(f"Loading initial expert data from {expertise_csv}")
+            logger.info(f"Loading experts from {expertise_csv}")
             
             conn = get_db_connection()
             cur = conn.cursor()
 
-            # Check column types
             cur.execute("""
                 SELECT column_name, data_type 
                 FROM information_schema.columns 
@@ -110,42 +97,32 @@ class OpenAlexProcessor:
             df = pd.read_csv(expertise_csv)
             for _, row in df.iterrows():
                 try:
-                    # Updated to match your CSV column names exactly
-                    first_name = row['First_name']  # Changed from 'first_name'
-                    last_name = row['Last_name']    # Changed from 'last_name'
-                    designation = row['Designation']
-                    theme = row['Theme']
-                    unit = row['Unit']
-                    contact_details = row['Contact Details']
+                    first_name = row['First_name']
+                    last_name = row['Last_name']
                     expertise_str = row['Knowledge and Expertise']
-                    
-                    if pd.isna(expertise_str):
-                        expertise_list = []
-                    else:
+                    expertise_list = []
+                    if not pd.isna(expertise_str):
                         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
 
                     cur.execute("""
                     INSERT INTO experts_expert (
-                        first_name, last_name, designation, theme, unit, contact_details, knowledge_expertise
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s
-                    )
-                    RETURNING id
+                        first_name, last_name, designation, theme, unit, 
+                        contact_details, knowledge_expertise
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        first_name, last_name, designation, theme, unit, contact_details,
-                        prepare_array_or_jsonb(expertise_list, column_types['knowledge_expertise'] == 'jsonb')
+                        first_name, last_name, row['Designation'],
+                        row['Theme'], row['Unit'], row['Contact Details'],
+                        json.dumps(expertise_list) if column_types['knowledge_expertise'] == 'jsonb' else expertise_list
                     ))
-
                     conn.commit()
-                    logger.info(f"Added/updated expert data for {first_name} {last_name}")
+                    logger.info(f"Added expert: {first_name} {last_name}")
 
                 except Exception as e:
                     conn.rollback()
-                    logger.error(f"Error processing row for {row.get('First_name', 'Unknown')} {row.get('Last_name', 'Unknown')}: {e}")
-                    continue
+                    logger.error(f"Error processing row: {e}")
 
         except Exception as e:
-            logger.error(f"Error loading initial expert data: {e}")
+            logger.error(f"Error loading experts: {e}")
             raise
         finally:
             if 'cur' in locals():
@@ -155,22 +132,19 @@ class OpenAlexProcessor:
 
     async def _update_single_expert(self, session: aiohttp.ClientSession, 
                                 expert_id: int, first_name: str, last_name: str):
-        """Update a single expert with OpenAlex data."""
+        """Update a single expert."""
         try:
-            success = await self.expert_processor.update_expert_fields(
-                session, first_name, last_name
-            )
+            success = await self.update_expert_fields(session, first_name, last_name)
             if success:
-                logger.info(f"Updated data for {first_name} {last_name}")
+                logger.info(f"Updated expert: {first_name} {last_name}")
             else:
-                logger.warning(f"Could not update fields for {first_name} {last_name}")
+                logger.warning(f"Failed to update expert: {first_name} {last_name}")
         except Exception as e:
             logger.error(f"Error processing expert {first_name} {last_name}: {e}")
 
     async def update_experts_with_openalex(self):
         """Update experts with OpenAlex data."""
         try:
-            # Get all experts without ORCID
             experts = self.db.execute("""
                 SELECT id, first_name, last_name
                 FROM experts_expert
@@ -178,13 +152,12 @@ class OpenAlexProcessor:
             """)
             
             if not experts:
-                logger.info("No experts found requiring OpenAlex update")
+                logger.info("No experts to update")
                 return
             
             logger.info(f"Found {len(experts)} experts to update")
             
             async with aiohttp.ClientSession() as session:
-                # Process experts in batches to avoid overloading
                 batch_size = 5
                 for i in range(0, len(experts), batch_size):
                     batch = experts[i:i + batch_size]
@@ -196,243 +169,192 @@ class OpenAlexProcessor:
                         )
                         tasks.append(task)
                     
-                    # Wait for batch to complete
                     await asyncio.gather(*tasks, return_exceptions=True)
                     
-                    # Add delay between batches
                     if i + batch_size < len(experts):
                         await asyncio.sleep(2)
 
-            logger.info("Expert update process completed")
+            logger.info("Expert update completed")
                         
         except Exception as e:
-            logger.error(f"Error updating experts with OpenAlex data: {e}")
+            logger.error(f"Error updating experts: {e}")
             raise
 
-    
     async def update_expert_fields(self, session: aiohttp.ClientSession, 
-                               first_name: str, last_name: str) -> bool:
-        """
-        Update expert fields with OpenAlex data.
-        
-        Args:
-            session: Aiohttp session for HTTP requests.
-            first_name: First name of the expert.
-            last_name: Last name of the expert.
-        
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
+                           first_name: str, last_name: str) -> bool:
+        """Update expert fields with OpenAlex data."""
         try:
-            # Get OpenAlex IDs
             orcid, openalex_id = self.get_expert_openalex_data(first_name, last_name)
             
             if not openalex_id:
                 logger.warning(f"No OpenAlex ID found for {first_name} {last_name}")
                 return False
             
-            # Get domains, fields, and subfields
             domains, fields, subfields = await self.get_expert_domains(
                 session, first_name, last_name, openalex_id
             )
             
-            # Prepare and execute the update query
-            self.db.execute("""
-                UPDATE experts_expert
-                SET 
-                    orcid = COALESCE(NULLIF(%s, ''), orcid),
-                    domains = ARRAY(
-                        SELECT DISTINCT unnest(
-                            COALESCE(
-                                ARRAY(SELECT jsonb_array_elements_text(CAST(domains AS jsonb))),
-                                '{}'::jsonb
-                            )
-                        )
-                    ),
-                    fields = ARRAY(
-                        SELECT DISTINCT unnest(
-                            COALESCE(
-                                ARRAY(SELECT jsonb_array_elements_text(CAST(fields AS jsonb))),
-                                '{}'::jsonb
-                            )
-                        )
-                    ),
-                    subfields = ARRAY(
-                        SELECT DISTINCT unnest(
-                            COALESCE(
-                                ARRAY(SELECT jsonb_array_elements_text(CAST(subfields AS jsonb))),
-                                '{}'::jsonb
-                            )
-                        )
-                    )
-                WHERE 
-                    first_name = %s AND last_name = %s
-                RETURNING id
-            """, (
-                orcid,           # Parameter 1
-                domains,         # Parameter 2
-                fields,          # Parameter 3
-                subfields,       # Parameter 4
-                first_name,       # Parameter 5
-                last_name         # Parameter 6
-            ))
-            
-            logger.info(f"Updated OpenAlex data for {first_name} {last_name}")
-            return True
-        
+            try:
+                self.db.execute("""
+                    UPDATE experts_expert
+                    SET orcid = COALESCE(NULLIF(%s, ''), orcid),
+                        domains = %s,
+                        fields = %s,
+                        subfields = %s
+                    WHERE first_name = %s AND last_name = %s
+                """, (orcid, domains, fields, subfields, first_name, last_name))
+                
+                logger.info(f"Updated fields for {first_name} {last_name}")
+                return True
+
+            except Exception as e:
+                logger.error(f"Database update error for {first_name} {last_name}: {e}")
+                raise
+
         except Exception as e:
             logger.error(f"Error updating expert fields for {first_name} {last_name}: {e}")
             return False
 
-
     async def get_expert_domains(self, session: aiohttp.ClientSession, 
-                               first_name: str, last_name: str, openalex_id: str) -> Tuple[List[str], List[str], List[str]]:
+                           first_name: str, last_name: str, 
+                           openalex_id: str) -> Tuple[List[str], List[str], List[str]]:
         """Get expert domains from their works."""
-        works = await self.get_expert_works(session, openalex_id)
-        
-        domains = set()
-        fields = set()
-        subfields = set()
+        try:
+            works = await self.get_expert_works(session, openalex_id)
+            
+            domains = set()
+            fields = set()
+            subfields = set()
 
-        logger.info(f"Processing {len(works)} works for {first_name} {last_name}")
-
-        for work in works:
-            try:
+            for work in works:
                 topics = work.get('topics', [])
-                if not topics:
-                    continue
-
                 for topic in topics:
-                    domain = topic.get('domain', {}).get('display_name')
-                    field = topic.get('field', {}).get('display_name')
-                    topic_subfields = [sf.get('display_name') for sf in topic.get('subfields', [])]
+                    if topic:
+                        domain = topic.get('domain', {}).get('display_name')
+                        field = topic.get('field', {}).get('display_name')
+                        topic_subfields = [sf.get('display_name') for sf in topic.get('subfields', [])]
 
-                    if domain:
-                        domains.add(domain)
-                    if field:
-                        fields.add(field)
-                    subfields.update(sf for sf in topic_subfields if sf)
-            except Exception as e:
-                logger.error(f"Error processing work topic: {e}")
-                continue
+                        if domain:
+                            domains.add(domain)
+                        if field:
+                            fields.add(field)
+                        subfields.update(sf for sf in topic_subfields if sf)
 
-        return list(domains), list(fields), list(subfields)
+            return list(domains), list(fields), list(subfields)
+
+        except Exception as e:
+            logger.error(f"Error getting domains for {first_name} {last_name}: {e}")
+            return [], [], []
 
     async def get_expert_works(self, session: aiohttp.ClientSession, openalex_id: str, 
-                             retries: int = 3, delay: int = 5) -> List[Dict]:
+                         retries: int = 3, delay: int = 5) -> List[Dict]:
         """Fetch expert works from OpenAlex."""
-        works_url = f"{self.base_url}/works"
+        url = f"{self.base_url}/works"
         params = {
             'filter': f"authorships.author.id:{openalex_id}",
             'per-page': 50
         }
 
-        logger.info(f"Fetching works for OpenAlex_ID: {openalex_id}")
-        
         for attempt in range(retries):
             try:
-                async with session.get(works_url, params=params) as response:
+                async with session.get(url, params=params) as response:
                     if response.status == 200:
-                        works_data = await response.json()
-                        return works_data.get('results', [])
-                    
-                    elif response.status == 429:  # Rate limit
+                        data = await response.json()
+                        return data.get('results', [])
+                    elif response.status == 429:
                         wait_time = delay * (attempt + 1)
-                        logger.warning(f"Rate limit hit, waiting {wait_time}s...")
+                        logger.warning(f"Rate limit hit, waiting {wait_time}s")
                         await asyncio.sleep(wait_time)
                         continue
                     else:
-                        logger.error(f"Error fetching works: {response.status}")
+                        logger.error(f"Failed to fetch works: Status {response.status}")
+                        if attempt < retries - 1:
+                            await asyncio.sleep(delay)
+                            continue
                         break
 
             except Exception as e:
-                logger.error(f"Error fetching works for {openalex_id}: {e}")
+                logger.error(f"Error fetching works: {e}")
                 if attempt < retries - 1:
                     await asyncio.sleep(delay)
-                
+                    continue
+                break
+
         return []
 
     async def process_publications(self, pub_processor: PublicationProcessor, source: str = 'openalex'):
+        """Process publications for experts with ORCID."""
         try:
-            # Get all experts with ORCID
             experts = self.db.execute("""
                 SELECT id, first_name, last_name, orcid
                 FROM experts_expert
-                WHERE orcid IS NOT NULL AND orcid != '' AND first_name <> 'Unknown' AND last_name <> 'Unknown'
+                WHERE orcid IS NOT NULL AND orcid != '' 
+                AND first_name <> 'Unknown' AND last_name <> 'Unknown'
             """)
             
             if not experts:
-                logger.info("No experts found with ORCID for publication processing")
+                logger.info("No experts found with ORCID")
                 return
             
             publication_count = 0
-            max_publications = 10
+            TARGET_PUBLICATIONS = 10
             
-            logger.info(f"Processing publications for {len(experts)} experts")
-
             async with aiohttp.ClientSession() as session:
                 for expert_id, first_name, last_name, orcid in experts:
+                    if publication_count >= TARGET_PUBLICATIONS:
+                        break
+
                     try:
-                        if publication_count >= max_publications:
-                            logger.info("Reached maximum total publication limit")
-                            break
+                        fetched_works = await self._fetch_expert_publications(
+                            session, orcid,
+                            per_page=min(5, TARGET_PUBLICATIONS - publication_count)
+                        )
 
-                        logger.info(f"Fetching publications for {first_name} {last_name}")
-                        fetched_works = await self._fetch_expert_publications(session, orcid)
-                        
                         for work in fetched_works:
-                            try:
-                                if publication_count >= max_publications:
-                                    break
+                            if publication_count >= TARGET_PUBLICATIONS:
+                                break
 
-                                # Process publication and its tags in a single transaction
+                            try:
                                 self.db.execute("BEGIN")
-                                try:
-                                    processed = pub_processor.process_single_work(work, source=source)
-                                    if processed:
-                                        publication_count += 1
-                                        logger.info(
-                                            f"Processed publication {publication_count}/{max_publications}: "
-                                            f"{work.get('title', 'Unknown Title')}"
-                                        )
-                                        self.db.execute("COMMIT")
-                                    else:
-                                        self.db.execute("ROLLBACK")
-                                    
-                                except Exception as e:
-                                    self.db.execute("ROLLBACK")
-                                    logger.error(f"Error in transaction: {e}")
-                                    continue
-                                    
-                            except Exception as e:
-                                logger.error(f"Error processing work: {e}")
-                                continue
-                                        
-                    except Exception as e:
-                        logger.error(f"Error processing publications for {first_name} {last_name}: {e}")
-                        continue
+                                processed = pub_processor.process_single_work(work, source=source)
                                 
-                logger.info(f"OpenAlex publications processing completed. Total processed: {publication_count}")
-                    
+                                if processed:
+                                    publication_count += 1
+                                    self.db.execute("COMMIT")
+                                    logger.info(f"Processed publication {publication_count}/{TARGET_PUBLICATIONS}")
+                                else:
+                                    self.db.execute("ROLLBACK")
+                                
+                            except Exception as e:
+                                self.db.execute("ROLLBACK")
+                                logger.error(f"Error processing publication: {e}")
+                                continue
+
+                    except Exception as e:
+                        logger.error(f"Error processing expert {first_name} {last_name}: {e}")
+                        continue
+
+            logger.info("Publications processing completed")
+                
         except Exception as e:
-            logger.error(f"Error in publications processing: {e}")
-            return  # Changed from raise to return to match ORCID processor behavior
+            logger.error(f"Error processing publications: {e}")
+
     async def _fetch_expert_publications(self, session: aiohttp.ClientSession, orcid: str,
-                                       per_page: int = 5) -> List[Dict[str, Any]]:
-        """Fetch publications for an expert from OpenAlex."""
+                                   per_page: int = 5) -> List[Dict[str, Any]]:
+        """Fetch publications for an expert."""
         try:
             url = f"{self.base_url}/works"
             params = {
                 'filter': f"author.orcid:{orcid}",
-                'per_page': per_page
+                'per-page': per_page
             }
             
             async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     return data.get('results', [])
-                elif response.status == 429:  # Rate limit
-                    logger.warning("Rate limit hit, waiting before retry...")
+                elif response.status == 429:
+                    logger.warning("Rate limit hit, waiting before retry")
                     await asyncio.sleep(5)
                     return []
                 else:
@@ -445,36 +367,34 @@ class OpenAlexProcessor:
 
     def get_expert_openalex_data(self, first_name: str, last_name: str) -> Tuple[str, str]:
         """Get expert's ORCID and OpenAlex ID."""
-        search_url = f"{self.base_url}/authors"
-        params = {
-            "search": f"{first_name} {last_name}",
-            "filter": "display_name.search:" + f'"{first_name} {last_name}"'
-        }
-        
         try:
-            for attempt in range(3):  # Add retry logic
+            url = f"{self.base_url}/authors"
+            params = {
+                "search": f"{first_name} {last_name}",
+                "filter": "display_name.search:" + f'"{first_name} {last_name}"'
+            }
+            
+            for attempt in range(3):
                 try:
-                    response = requests.get(search_url, params=params)
+                    response = requests.get(url, params=params)
                     response.raise_for_status()
                     
                     if response.status_code == 200:
                         results = response.json().get('results', [])
                         if results:
                             author = results[0]
-                            orcid = author.get('orcid', '')
-                            openalex_id = author.get('id', '')
-                            return orcid, openalex_id
+                            return author.get('orcid', ''), author.get('id', '')
                     
-                    elif response.status_code == 429:  # Rate limit
+                    elif response.status_code == 429:
                         wait_time = (attempt + 1) * 5
-                        logger.warning(f"Rate limit hit, waiting {wait_time}s...")
-                        asyncio.sleep(wait_time)
+                        logger.warning(f"Rate limit hit, waiting {wait_time}s")
+                        time.sleep(wait_time)
                         continue
                         
                 except requests.RequestException as e:
                     logger.error(f"Request failed (attempt {attempt + 1}): {e}")
-                    if attempt < 2:  # Only sleep if we're going to retry
-                        asyncio.sleep(5)
+                    if attempt < 2:
+                        time.sleep(5)
                     continue
                 
         except Exception as e:
@@ -486,7 +406,7 @@ class OpenAlexProcessor:
         try:
             if hasattr(self, 'db'):
                 self.db.close()
-            logger.info("OpenAlexProcessor resources cleaned up")
+            logger.info("Resources cleaned up")
         except Exception as e:
             logger.error(f"Error closing resources: {e}")
 

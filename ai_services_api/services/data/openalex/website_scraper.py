@@ -2,460 +2,189 @@ import os
 import logging
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional, Tuple
-from time import sleep
+from typing import List, Dict, Optional
 from datetime import datetime
 import re
 import hashlib
 import json
+from time import sleep
 
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
-from ai_services_api.services.data.openalex.text_processor import safe_str, truncate_text
+from ai_services_api.services.data.openalex.text_processor import safe_str
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 class WebsiteScraper:
     def __init__(self, summarizer: Optional[TextSummarizer] = None):
-        """
-        Initialize WebsiteScraper with summarization capability.
-        
-        Args:
-            summarizer (Optional[TextSummarizer]): Summarization service
-        """
+        """Initialize WebsiteScraper."""
         self.base_url = "https://aphrc.org"
-        self.urls = {
-            'publications': f"{self.base_url}/publications/",
-            'documents': f"{self.base_url}/documents_reports/",
-            'ideas': f"{self.base_url}/ideas/"
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        
-        # Publication type mapping
-        self.type_mapping = {
-            'Annual Reports': 'report',
-            'Briefing Papers': 'briefing',
-            'comic': 'other',
-            'Factsheet': 'factsheet',
-            'Financial Report': 'report',
-            'General': 'other',
-            'Journal Articles': 'journal_article',
-            'Multimedia': 'multimedia',
-            'Newsletters': 'newsletter',
-            'Policy brief': 'policy_brief',
-            'Poster': 'poster',
-            'Short Report': 'report',
-            'Strategic Plan': 'plan',
-            'Technical Reports': 'technical_report',
-            'Working Paper': 'working_paper'
-        }
-        
-        # Initialize summarizer
         self.summarizer = summarizer or TextSummarizer()
-        
-        # Tracking to prevent duplicates
-        self.seen_titles = set()
-        
-        # Logging setup
-        self.logger = logging.getLogger(__name__)
-
-    def _generate_synthetic_doi(self, title: str, url: str) -> str:
-        """Generate a synthetic DOI for website publications."""
-        try:
-            unique_string = f"{title}|{url}"
-            hash_object = hashlib.sha256(unique_string.encode())
-            hash_digest = hash_object.hexdigest()[:16]
-            return f"10.0000/aphrc-{hash_digest}"
-        except Exception as e:
-            self.logger.error(f"Error generating synthetic DOI: {e}")
-            return f"10.0000/random-{hashlib.md5(unique_string.encode()).hexdigest()[:16]}"
-
-    def _extract_year_and_type(self, element: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
-        """Extract publication year and type from element."""
-        try:
-            year = None
-            pub_type = None
-            
-            # Extract year
-            year_elem = element.select_one('.year, [class*="year"]')
-            if year_elem:
-                year_match = re.search(r'\d{4}', year_elem.text)
-                if year_match:
-                    year = year_match.group(0)
-            
-            # Extract type
-            type_elem = element.select_one('.type, .category, [class*="type"]')
-            if type_elem:
-                pub_type = type_elem.text.strip()
-                pub_type = self.type_mapping.get(pub_type, 'other')
-            
-            return year, pub_type
-        except Exception as e:
-            self.logger.error(f"Error extracting year and type: {e}")
-            return None, None
+        self.seen_urls = set()
 
     def fetch_content(self, limit: int = 10) -> List[Dict]:
-        """Fetch content from specified URLs with publication-style formatting."""
-        all_publications = []
-        
-        for section, url in self.urls.items():
-            self.logger.info(f"Fetching {section} from {url}")
-            try:
-                response = self._make_request(url)
-                if response.status_code != 200:
-                    self.logger.error(f"Failed to access {section}: {response.status_code}")
-                    continue
-
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Handle different page structures
-                if self._has_load_more_button(soup):
-                    publications = self._fetch_with_load_more(url, section, limit)
-                else:
-                    publications = self._fetch_with_pagination(url, section, limit)
-                
-                all_publications.extend(publications)
-                
-                if limit and len(all_publications) >= limit:
-                    all_publications = all_publications[:limit]
-                    break
-                    
-            except Exception as e:
-                self.logger.error(f"Error fetching {section}: {str(e)}")
-                continue
-                
-        return all_publications
-
-    def _fetch_with_load_more(self, url: str, section: str, limit: int) -> List[Dict]:
-        """Handle infinite scroll or load more pagination."""
-        publications = []
-        page = 1
-        
-        while True:
-            try:
-                next_page_url = f"{url}page/{page}/"
-                response = self._make_request(next_page_url)
-                if response.status_code != 200:
-                    break
-                    
-                soup = BeautifulSoup(response.text, 'html.parser')
-                new_publications = self._extract_publications(soup, section)
-                
-                if not new_publications:
-                    break
-                    
-                publications.extend(new_publications)
-                
-                if limit and len(publications) >= limit:
-                    publications = publications[:limit]
-                    break
-                    
-                page += 1
-                sleep(1)  # Rate limiting
-                
-            except Exception as e:
-                self.logger.error(f"Error loading more items: {str(e)}")
-                break
-                
-        return publications
-
-    def _fetch_with_pagination(self, url: str, section: str, limit: int) -> List[Dict]:
-        """Handle traditional numbered pagination."""
-        publications = []
-        page = 1
-        
-        while True:
-            try:
-                page_url = f"{url}page/{page}/" if page > 1 else url
-                response = self._make_request(page_url)
-                
-                if response.status_code != 200:
-                    break
-                    
-                soup = BeautifulSoup(response.text, 'html.parser')
-                new_publications = self._extract_publications(soup, section)
-                
-                if not new_publications:
-                    break
-                    
-                publications.extend(new_publications)
-                
-                if limit and len(publications) >= limit:
-                    publications = publications[:limit]
-                    break
-                    
-                page += 1
-                sleep(1)  # Rate limiting
-                
-            except Exception as e:
-                self.logger.error(f"Error processing page {page}: {str(e)}")
-                break
-                
-        return publications
-
-    def _extract_publications(self, soup: BeautifulSoup, section: str) -> List[Dict]:
-        """Extract publications from page."""
+        """Fetch content from website with detailed logging."""
         publications = []
         
-        # Updated selectors for APHRC website structure
-        selectors = {
-            'publications': ['article', '.publication-item', '.elementor-post'],
-            'documents': ['article', '.document-item', '.elementor-post'],
-            'ideas': ['article', '.post-item', '.elementor-post']
-        }
-        
-        # Find elements using section-specific selectors
-        elements = []
-        for selector in selectors.get(section, []):
-            elements.extend(soup.select(selector))
-        
-        for element in elements:
-            try:
-                publication = self._parse_publication(element, section)
-                if publication and publication['title'] not in self.seen_titles:
-                    self.seen_titles.add(publication['title'])
-                    publications.append(publication)
-            except Exception as e:
-                self.logger.error(f"Error parsing item: {str(e)}")
-                continue
-                
-        return publications
-
-    def _parse_publication(self, element: BeautifulSoup, section: str) -> Optional[Dict]:
-        """Parse a single publication item to match resources_resource table structure."""
         try:
-            # Extract basic information
-            title_elem = element.select_one('h1, h2, h3, h4, a')
-            if not title_elem:
-                return None
-                
-            title = safe_str(title_elem.text.strip())
+            logger.info(f"\nAccessing base URL: {self.base_url}")
+            response = self._make_request(self.base_url)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Extract URL and generate DOI
-            if title_elem.name == 'a':
-                url = title_elem.get('href', '')
-            else:
-                link = element.find('a')
-                url = link.get('href', '') if link else ''
-
-            if not url.startswith('http'):
-                url = self.base_url + url
+            # Log page structure
+            logger.info("\nPage Structure:")
+            for tag in soup.find_all(['div', 'section', 'article']):
+                if tag.get('class'):
+                    logger.info(f"Found {tag.name} with classes: {tag.get('class')}")
             
-            doi = self._generate_synthetic_doi(title, url)
+            # Find all links
+            all_links = soup.find_all('a', href=True)
+            logger.info(f"\nFound {len(all_links)} total links")
             
-            # Extract publication year and type
-            year, pub_type = self._extract_year_and_type(element)
-            
-            # Extract date and ensure we have a date_issue
-            date_elem = element.select_one('.date, .elementor-post-date, time')
-            date = None
-            if date_elem:
-                date_str = date_elem.get('datetime', '') or date_elem.text.strip()
-                date = self._parse_date(date_str)
-            elif year:
-                date = datetime(int(year), 1, 1)
-            
-            # Extract description/abstract
-            excerpt_elem = element.select_one('.excerpt, .description, p')
-            excerpt = safe_str(excerpt_elem.text.strip()) if excerpt_elem else ''
-            
-            # Generate summary with fallback
-            try:
-                summary = self._generate_summary(title, excerpt)
-            except Exception as e:
-                logger.error(f"Error generating summary: {e}")
-                summary = excerpt or f"Publication about {title}"
-            
-            # Initialize tags list
-            tags = []
-            
-            # Extract and process authors
-            author_elems = element.select('.author, meta[name="author"], .elementor-post-author, .elementor-post-info__terms-list-item')
-            authors = []
-            for author_elem in author_elems:
-                author_name = author_elem.get('content', '') or author_elem.text.strip()
-                if author_name:
-                    authors.append(author_name)
-                    # Add author tag
-                    tags.append({
-                        'name': author_name,
-                        'tag_type': 'author',
-                        'additional_metadata': json.dumps({
-                            'source': 'website',
-                            'affiliation': 'APHRC',
-                            'section': section
-                        })
-                    })
-            
-            # Extract subtitle
-            subtitle_elem = element.select_one('.subtitle, .elementor-post-subtitle')
-            subtitles = {}
-            if subtitle_elem:
-                subtitles = {'main': subtitle_elem.text.strip()}
-            
-            # Extract and process keywords/tags
-            keyword_elems = element.select('.tags a, .keywords a, .elementor-post-tags a, .elementor-post-info__terms-list-item')
-            keywords = []
-            for tag_elem in keyword_elems:
-                tag_text = tag_elem.text.strip()
-                if tag_text and tag_text not in keywords:
-                    keywords.append(tag_text)
-                    # Add keyword tag
-                    tags.append({
-                        'name': tag_text,
-                        'tag_type': 'domain',
-                        'additional_metadata': json.dumps({
-                            'source': 'website',
-                            'type': 'keyword',
-                            'section': section
-                        })
-                    })
-            
-            # Add publication type tag
-            if pub_type:
-                tags.append({
-                    'name': pub_type,
-                    'tag_type': 'publication_type',
-                    'additional_metadata': json.dumps({
-                        'source': 'website',
-                        'section': section,
-                        'original_type': pub_type
-                    })
-                })
-
-            # Extract categories/themes
-            category_elems = element.select('.category a, .theme a, .elementor-post-category')
-            for cat_elem in category_elems:
-                category = cat_elem.text.strip()
-                if category and category not in keywords:
-                    tags.append({
-                        'name': category,
-                        'tag_type': 'domain',
-                        'additional_metadata': json.dumps({
-                            'source': 'website',
-                            'type': 'category',
-                            'section': section
-                        })
-                    })
-                    keywords.append(category)
-
-            # Construct complete publication record
-            publication = {
-                'doi': doi,
-                'title': title,
-                'abstract': excerpt or f"Publication about {title}",
-                'summary': summary,
-                'authors': authors,
-                'description': excerpt or f"Publication about {title}",
-                'expert_id': None,
-                'type': pub_type or 'other',
-                'subtitles': json.dumps(subtitles),
-                'publishers': json.dumps({
-                    'name': 'APHRC',
-                    'url': self.base_url,
-                    'type': section
-                }),
-                'collection': section,
-                'date_issue': date.strftime('%Y-%m-%d') if date else None,
-                'citation': None,
-                'language': 'en',
-                'identifiers': json.dumps({
-                    'doi': doi,
-                    'url': url,
-                    'source_id': f"aphrc-{section}-{hashlib.md5(url.encode()).hexdigest()[:8]}",
-                    'keywords': keywords
-                }),
-                'source': 'website',
-                'tags': tags  # Add the collected tags
-            }
-            
-            return publication
-                
-        except Exception as e:
-            logger.error(f"Error parsing publication: {str(e)}")
-            return None
-
-    def _generate_summary(self, title: str, abstract: str) -> str:
-        """Generate a summary using the TextSummarizer."""
-        try:
-            title = truncate_text(title, max_length=200)
-            abstract = truncate_text(abstract, max_length=1000)
-            try:
-                summary = self.summarizer.summarize(title, abstract)
-                return truncate_text(summary, max_length=500)
-            except Exception as e:
-                logger.error(f"Summary generation error: {e}")
-                return abstract if abstract else f"Publication about {title}"
-        except Exception as e:
-            logger.error(f"Error in summary generation: {e}")
-            return title  # Fallback to just the title
-
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """Parse date string into datetime object."""
-        if not date_str:
-            return None
-            
-        try:
-            # Updated date formats for APHRC website
-            formats = [
-                '%Y-%m-%d',
-                '%d/%m/%Y',
-                '%B %d, %Y',
-                '%d %B %Y',
-                '%d.%m.%Y',
-                '%Y/%m/%d'
-            ]
-            
-            for fmt in formats:
+            # Process each link
+            for link in all_links:
+                if len(publications) >= limit:
+                    break
+                    
                 try:
-                    return datetime.strptime(date_str.strip(), fmt)
-                except ValueError:
+                    href = link.get('href', '').strip()
+                    if not href or href in self.seen_urls:
+                        continue
+                        
+                    # Normalize URL
+                    url = href if href.startswith('http') else f"{self.base_url}{href}"
+                    
+                    # Log raw link data
+                    logger.info("\n" + "="*80)
+                    logger.info("Analyzing content at: " + url)
+                    logger.info("Raw Link Data:")
+                    logger.info(f"Text: {link.get_text().strip()}")
+                    logger.info(f"Classes: {link.get('class', [])}")
+                    logger.info("="*80)
+                    
+                    # Get the page content
+                    try:
+                        page_response = self._make_request(url)
+                        page_soup = BeautifulSoup(page_response.text, 'html.parser')
+                        
+                        # Log entire page structure
+                        logger.info("\nPage Content Structure:")
+                        for elem in page_soup.find_all(['main', 'article', 'section']):
+                            logger.info(f"Found {elem.name} with classes: {elem.get('class', [])}")
+                        logger.info("-"*40)
+                        
+                        # Extract content with detailed logging
+                        title_elem = page_soup.find(['h1', 'h2', 'h3', 'title'])
+                        title = title_elem.get_text().strip() if title_elem else link.get_text().strip()
+                        logger.info(f"\nTitle found: {title}")
+                        
+                        # Look for content elements
+                        content_elems = page_soup.find_all(['p', 'article', 'section', 'div'], 
+                                                         class_=re.compile(r'content|body|text|description', re.I))
+                        content_text = '\n'.join(elem.get_text().strip() 
+                                               for elem in content_elems 
+                                               if elem.get_text().strip())
+                        
+                        # Log content preview
+                        logger.info("\nContent Preview:")
+                        logger.info(content_text[:500] + "..." if len(content_text) > 500 else content_text)
+                        
+                        # Extract date
+                        date_elem = page_soup.find(['time', 'span', 'div'], 
+                                                 class_=re.compile(r'date|time|published', re.I))
+                        date_text = date_elem.get_text().strip() if date_elem else None
+                        year = None
+                        if date_text:
+                            year_match = re.search(r'\b(19|20)\d{2}\b', date_text)
+                            if year_match:
+                                year = int(year_match.group())
+                            logger.info(f"\nDate found: {date_text} (Year: {year})")
+                        
+                        # Extract authors
+                        author_elems = page_soup.find_all(['span', 'div', 'p'], 
+                                                        class_=re.compile(r'author|byline|writer', re.I))
+                        authors = [author.get_text().strip() 
+                                 for author in author_elems 
+                                 if author.get_text().strip()]
+                        if authors:
+                            logger.info(f"\nAuthors found: {authors}")
+                        
+                        # Generate summary
+                        summary = content_text[:1000] if content_text else f"Content from {title}"
+                        if self.summarizer:
+                            try:
+                                summary = self.summarizer.summarize(title, content_text)
+                                logger.info("\nSummary generated successfully")
+                            except Exception as e:
+                                logger.error(f"Summary generation failed: {e}")
+                        
+                        # Create publication record
+                        doi = f"10.0000/aphrc-{hashlib.md5(url.encode()).hexdigest()[:16]}"
+                        publication = {
+                            'title': safe_str(title),
+                            'doi': doi,
+                            'authors': authors,
+                            'domains': [],  # No domain info found yet
+                            'type': 'publication',  # Default type
+                            'publication_year': year,
+                            'summary': safe_str(summary),
+                            'source': 'website'
+                        }
+                        
+                        # Log final structured data
+                        logger.info("\nStructured Data Extracted:")
+                        logger.info(json.dumps(publication, indent=2))
+                        
+                        publications.append(publication)
+                        self.seen_urls.add(url)
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing page {url}: {e}")
+                        continue
+                        
+                except Exception as e:
+                    logger.error(f"Error processing link: {e}")
                     continue
                     
-            # Try to extract year if full date parsing fails
-            year_match = re.search(r'\d{4}', date_str)
-            if year_match:
-                return datetime(int(year_match.group(0)), 1, 1)
+                sleep(1)  # Rate limiting
                 
-            return None
+        except Exception as e:
+            logger.error(f"Error in fetch_content: {e}")
             
-        except Exception:
-            return None
+        logger.info(f"\nTotal publications found: {len(publications)}")
+        return publications
 
-    def _has_load_more_button(self, soup: BeautifulSoup) -> bool:
-        """Check if page has a load more button or infinite scroll."""
-        load_more_selectors = [
-            '.load-more',
-            '.elementor-button-link',
-            'button[data-page]',
-            '.elementor-pagination',
-            '.pagination'
-        ]
-        return any(bool(soup.select(selector)) for selector in load_more_selectors)
-
-    def _make_request(self, url: str, method: str = 'get', **kwargs) -> requests.Response:
-        """Make an HTTP request with error handling."""
+    def _make_request(self, url: str) -> requests.Response:
+        """Make HTTP request with error handling."""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            }
-            
-            headers.update(kwargs.get('headers', {}))
-            kwargs['headers'] = headers
-            
-            response = requests.request(method, url, **kwargs)
+            response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response
-            
-        except requests.RequestException as e:
-            self.logger.error(f"Request error for {url}: {e}")
+        except Exception as e:
+            logger.error(f"Request failed for {url}: {e}")
             raise
 
     def close(self):
-        """Close resources and perform cleanup."""
+        """Clean up resources."""
         try:
             if hasattr(self.summarizer, 'close'):
                 self.summarizer.close()
-            
-            self.seen_titles.clear()
-            
-            self.logger.info("WebsiteScraper resources cleaned up")
+            self.seen_urls.clear()
+            logger.info("WebsiteScraper resources cleaned up")
         except Exception as e:
-            self.logger.error(f"Error closing WebsiteScraper: {e}")
+            logger.error(f"Error in cleanup: {e}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, traceback):
+        """Context manager exit."""
+        self.close()
