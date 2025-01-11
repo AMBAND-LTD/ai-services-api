@@ -3,35 +3,19 @@ import plotly.graph_objects as go
 import streamlit as st
 
 def get_expert_metrics(conn, start_date, end_date, expert_count):
-    """
-    Retrieve expert metrics from the database for the specified date range.
-
-    This function queries the database to fetch various expert metrics such as chat matches, chat similarity,
-    chat click rate, search matches, average search rank, and search click rate. The metrics are calculated
-    for each expert and returned as a pandas DataFrame.
-
-    Parameters:
-    - conn: psycopg2 connection object representing the database connection.
-    - start_date (datetime): The start date of the date range.
-    - end_date (datetime): The end date of the date range.
-    - expert_count (int): The number of experts to include in the result.
-
-    Returns:
-    - pandas.DataFrame: A DataFrame containing the expert metrics for each expert.
-    """
     cursor = conn.cursor()
     try:
         cursor.execute("""
             WITH ChatExperts AS (
                 SELECT 
-                    a.expert_id,
+                    a.id::text,  -- Cast to text since we're comparing with text
                     COUNT(*) as chat_matches,
                     AVG(a.similarity_score) as chat_similarity,
                     SUM(CASE WHEN a.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as chat_click_rate
                 FROM chat_analytics a
                 JOIN chat_interactions i ON a.interaction_id = i.id
                 WHERE i.timestamp BETWEEN %s AND %s
-                GROUP BY a.expert_id
+                GROUP BY a.id
             ),
             SearchExperts AS (
                 SELECT 
@@ -54,7 +38,7 @@ def get_expert_metrics(conn, start_date, end_date, expert_count):
                 COALESCE(se.avg_rank, 0) as search_avg_rank,
                 COALESCE(se.search_click_rate, 0) as search_click_rate
             FROM experts_expert e
-            LEFT JOIN ChatExperts ce ON e.id::text = ce.expert_id
+            LEFT JOIN ChatExperts ce ON e.id::text = ce.id
             LEFT JOIN SearchExperts se ON e.id::text = se.expert_id
             WHERE e.is_active = true
             ORDER BY (COALESCE(ce.chat_matches, 0) + COALESCE(se.search_matches, 0)) DESC
