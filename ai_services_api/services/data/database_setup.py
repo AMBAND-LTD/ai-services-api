@@ -312,6 +312,7 @@ def create_tables():
                 search_type VARCHAR(50),
                 success_rate FLOAT,
                 page_number INTEGER DEFAULT 1,
+                search_count INTEGER DEFAULT 1,
                 filters JSONB
             )
             """,
@@ -388,7 +389,7 @@ def create_tables():
             # Dependent table: expert_messages
             """
             CREATE TABLE IF NOT EXISTS expert_messages (
-                id SERIAL PRIMARY KEY,
+                expert_id SERIAL PRIMARY KEY,
                 sender_id INTEGER REFERENCES experts_expert(id),
                 receiver_id INTEGER REFERENCES experts_expert(id),
                 content TEXT,
@@ -429,6 +430,7 @@ def create_tables():
                 satisfaction_score FLOAT,
                 urgency_score FLOAT,
                 clarity_score FLOAT,
+                chat_count INTEGER DEFAULT 1,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,

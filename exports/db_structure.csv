@@ -1,0 +1,566 @@
+table_schema,table_name,column_name,data_type,character_maximum_length,is_nullable,column_default
+public,ab_permission,id,integer,,NO,nextval('ab_permission_id_seq'::regclass)
+public,ab_permission,name,character varying,100,NO,
+public,ab_permission_view,id,integer,,NO,nextval('ab_permission_view_id_seq'::regclass)
+public,ab_permission_view,permission_id,integer,,YES,
+public,ab_permission_view,view_menu_id,integer,,YES,
+public,ab_permission_view_role,id,integer,,NO,nextval('ab_permission_view_role_id_seq'::regclass)
+public,ab_permission_view_role,permission_view_id,integer,,YES,
+public,ab_permission_view_role,role_id,integer,,YES,
+public,ab_register_user,id,integer,,NO,nextval('ab_register_user_id_seq'::regclass)
+public,ab_register_user,first_name,character varying,256,NO,
+public,ab_register_user,last_name,character varying,256,NO,
+public,ab_register_user,username,character varying,512,NO,
+public,ab_register_user,password,character varying,256,YES,
+public,ab_register_user,email,character varying,512,NO,
+public,ab_register_user,registration_date,timestamp without time zone,,YES,
+public,ab_register_user,registration_hash,character varying,256,YES,
+public,ab_role,id,integer,,NO,nextval('ab_role_id_seq'::regclass)
+public,ab_role,name,character varying,64,NO,
+public,ab_user,id,integer,,NO,nextval('ab_user_id_seq'::regclass)
+public,ab_user,first_name,character varying,256,NO,
+public,ab_user,last_name,character varying,256,NO,
+public,ab_user,username,character varying,512,NO,
+public,ab_user,password,character varying,256,YES,
+public,ab_user,active,boolean,,YES,
+public,ab_user,email,character varying,512,NO,
+public,ab_user,last_login,timestamp without time zone,,YES,
+public,ab_user,login_count,integer,,YES,
+public,ab_user,fail_login_count,integer,,YES,
+public,ab_user,created_on,timestamp without time zone,,YES,
+public,ab_user,changed_on,timestamp without time zone,,YES,
+public,ab_user,created_by_fk,integer,,YES,
+public,ab_user,changed_by_fk,integer,,YES,
+public,ab_user_role,id,integer,,NO,nextval('ab_user_role_id_seq'::regclass)
+public,ab_user_role,user_id,integer,,YES,
+public,ab_user_role,role_id,integer,,YES,
+public,ab_view_menu,id,integer,,NO,nextval('ab_view_menu_id_seq'::regclass)
+public,ab_view_menu,name,character varying,250,NO,
+public,alembic_version,version_num,character varying,32,NO,
+public,auth_group,id,integer,,NO,nextval('auth_group_id_seq'::regclass)
+public,auth_group,name,character varying,150,YES,
+public,auth_permission,id,integer,,NO,nextval('auth_permission_id_seq'::regclass)
+public,auth_permission,name,character varying,255,YES,
+public,auth_permission,content_type_id,integer,,YES,
+public,auth_permission,codename,character varying,100,YES,
+public,author_publication_ai,author_id,integer,,YES,
+public,author_publication_ai,doi,character varying,255,YES,
+public,authors_ai,author_id,integer,,NO,nextval('authors_ai_author_id_seq'::regclass)
+public,authors_ai,name,text,,YES,
+public,authors_ai,orcid,character varying,255,YES,
+public,authors_ai,author_identifier,character varying,255,YES,
+public,callback_request,id,integer,,NO,nextval('callback_request_id_seq'::regclass)
+public,callback_request,created_at,timestamp with time zone,,NO,
+public,callback_request,priority_weight,integer,,NO,
+public,callback_request,callback_data,json,,NO,
+public,callback_request,callback_type,character varying,20,NO,
+public,callback_request,processor_subdir,character varying,2000,YES,
+public,celery_taskmeta,id,integer,,NO,
+public,celery_taskmeta,task_id,character varying,155,YES,
+public,celery_taskmeta,status,character varying,50,YES,
+public,celery_taskmeta,result,bytea,,YES,
+public,celery_taskmeta,date_done,timestamp without time zone,,YES,
+public,celery_taskmeta,traceback,text,,YES,
+public,celery_taskmeta,name,character varying,155,YES,
+public,celery_taskmeta,args,bytea,,YES,
+public,celery_taskmeta,kwargs,bytea,,YES,
+public,celery_taskmeta,worker,character varying,155,YES,
+public,celery_taskmeta,retries,integer,,YES,
+public,celery_taskmeta,queue,character varying,155,YES,
+public,celery_tasksetmeta,id,integer,,NO,
+public,celery_tasksetmeta,taskset_id,character varying,155,YES,
+public,celery_tasksetmeta,result,bytea,,YES,
+public,celery_tasksetmeta,date_done,timestamp without time zone,,YES,
+public,chat_analytics,id,integer,,NO,nextval('chat_analytics_id_seq'::regclass)
+public,chat_analytics,interaction_id,integer,,YES,
+public,chat_analytics,content_id,character varying,255,YES,
+public,chat_analytics,content_type,character varying,50,YES,
+public,chat_analytics,similarity_score,double precision,,YES,
+public,chat_analytics,rank_position,integer,,YES,
+public,chat_analytics,clicked,boolean,,YES,false
+public,chat_analytics,timestamp,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_analytics,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_analytics,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_chatbox,id,integer,,NO,nextval('chat_chatbox_id_seq'::regclass)
+public,chat_chatbox,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_chatbox,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_chatbox,expert_from_id,integer,,YES,
+public,chat_chatbox,expert_to_id,integer,,YES,
+public,chat_chatbox,name,character varying,200,YES,
+public,chat_chatboxmessage,id,integer,,NO,nextval('chat_chatboxmessage_id_seq'::regclass)
+public,chat_chatboxmessage,message,text,,YES,
+public,chat_chatboxmessage,read,boolean,,YES,false
+public,chat_chatboxmessage,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_chatboxmessage,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_chatboxmessage,expert_from_id,integer,,YES,
+public,chat_chatboxmessage,expert_to_id,integer,,YES,
+public,chat_chatboxmessage,chatbox_id,integer,,YES,
+public,chat_daily_metrics,date,date,,YES,
+public,chat_daily_metrics,total_sessions,bigint,,YES,
+public,chat_daily_metrics,unique_users,bigint,,YES,
+public,chat_daily_metrics,total_interactions,bigint,,YES,
+public,chat_daily_metrics,avg_response_time,double precision,,YES,
+public,chat_daily_metrics,error_rate,double precision,,YES,
+public,chat_interactions,id,integer,,NO,nextval('chat_interactions_id_seq'::regclass)
+public,chat_interactions,session_id,character varying,255,YES,
+public,chat_interactions,user_id,character varying,255,NO,
+public,chat_interactions,query,text,,NO,
+public,chat_interactions,response,text,,YES,
+public,chat_interactions,timestamp,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_interactions,response_time,double precision,,YES,
+public,chat_interactions,intent_type,character varying,255,YES,
+public,chat_interactions,intent_confidence,double precision,,YES,
+public,chat_interactions,navigation_matches,integer,,YES,0
+public,chat_interactions,publication_matches,integer,,YES,0
+public,chat_interactions,error_occurred,boolean,,YES,false
+public,chat_interactions,context,jsonb,,YES,
+public,chat_interactions,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_interactions,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_sessions,id,integer,,NO,nextval('chat_sessions_id_seq'::regclass)
+public,chat_sessions,session_id,character varying,255,NO,
+public,chat_sessions,user_id,character varying,255,NO,
+public,chat_sessions,start_time,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_sessions,end_time,timestamp with time zone,,YES,
+public,chat_sessions,total_messages,integer,,YES,0
+public,chat_sessions,successful,boolean,,YES,true
+public,chat_sessions,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,chat_sessions,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,collaboration_history,id,integer,,NO,nextval('collaboration_history_id_seq'::regclass)
+public,collaboration_history,expert_id,character varying,255,NO,
+public,collaboration_history,collaborator_id,character varying,255,NO,
+public,collaboration_history,collaboration_score,double precision,,NO,
+public,collaboration_history,shared_domains,jsonb,,YES,
+public,collaboration_history,result_type,character varying,50,YES,
+public,collaboration_history,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,connection,id,integer,,NO,nextval('connection_id_seq'::regclass)
+public,connection,conn_id,character varying,250,NO,
+public,connection,conn_type,character varying,500,NO,
+public,connection,description,text,,YES,
+public,connection,host,character varying,500,YES,
+public,connection,schema,character varying,500,YES,
+public,connection,login,character varying,500,YES,
+public,connection,password,character varying,5000,YES,
+public,connection,port,integer,,YES,
+public,connection,is_encrypted,boolean,,YES,
+public,connection,is_extra_encrypted,boolean,,YES,
+public,connection,extra,text,,YES,
+public,dag,dag_id,character varying,250,NO,
+public,dag,root_dag_id,character varying,250,YES,
+public,dag,is_paused,boolean,,YES,
+public,dag,is_subdag,boolean,,YES,
+public,dag,is_active,boolean,,YES,
+public,dag,last_parsed_time,timestamp with time zone,,YES,
+public,dag,last_pickled,timestamp with time zone,,YES,
+public,dag,last_expired,timestamp with time zone,,YES,
+public,dag,scheduler_lock,boolean,,YES,
+public,dag,pickle_id,integer,,YES,
+public,dag,fileloc,character varying,2000,YES,
+public,dag,processor_subdir,character varying,2000,YES,
+public,dag,owners,character varying,2000,YES,
+public,dag,description,text,,YES,
+public,dag,default_view,character varying,25,YES,
+public,dag,schedule_interval,text,,YES,
+public,dag,timetable_description,character varying,1000,YES,
+public,dag,max_active_tasks,integer,,NO,
+public,dag,max_active_runs,integer,,YES,
+public,dag,has_task_concurrency_limits,boolean,,NO,
+public,dag,has_import_errors,boolean,,YES,false
+public,dag,next_dagrun,timestamp with time zone,,YES,
+public,dag,next_dagrun_data_interval_start,timestamp with time zone,,YES,
+public,dag,next_dagrun_data_interval_end,timestamp with time zone,,YES,
+public,dag,next_dagrun_create_after,timestamp with time zone,,YES,
+public,dag_code,fileloc_hash,bigint,,NO,
+public,dag_code,fileloc,character varying,2000,NO,
+public,dag_code,last_updated,timestamp with time zone,,NO,
+public,dag_code,source_code,text,,NO,
+public,dag_owner_attributes,dag_id,character varying,250,NO,
+public,dag_owner_attributes,owner,character varying,500,NO,
+public,dag_owner_attributes,link,character varying,500,NO,
+public,dag_pickle,id,integer,,NO,nextval('dag_pickle_id_seq'::regclass)
+public,dag_pickle,pickle,bytea,,YES,
+public,dag_pickle,created_dttm,timestamp with time zone,,YES,
+public,dag_pickle,pickle_hash,bigint,,YES,
+public,dag_run,id,integer,,NO,nextval('dag_run_id_seq'::regclass)
+public,dag_run,dag_id,character varying,250,NO,
+public,dag_run,queued_at,timestamp with time zone,,YES,
+public,dag_run,execution_date,timestamp with time zone,,NO,
+public,dag_run,start_date,timestamp with time zone,,YES,
+public,dag_run,end_date,timestamp with time zone,,YES,
+public,dag_run,state,character varying,50,YES,
+public,dag_run,run_id,character varying,250,NO,
+public,dag_run,creating_job_id,integer,,YES,
+public,dag_run,external_trigger,boolean,,YES,
+public,dag_run,run_type,character varying,50,NO,
+public,dag_run,conf,bytea,,YES,
+public,dag_run,data_interval_start,timestamp with time zone,,YES,
+public,dag_run,data_interval_end,timestamp with time zone,,YES,
+public,dag_run,last_scheduling_decision,timestamp with time zone,,YES,
+public,dag_run,dag_hash,character varying,32,YES,
+public,dag_run,log_template_id,integer,,YES,
+public,dag_run,updated_at,timestamp with time zone,,YES,
+public,dag_run_note,user_id,integer,,YES,
+public,dag_run_note,dag_run_id,integer,,NO,
+public,dag_run_note,content,character varying,1000,YES,
+public,dag_run_note,created_at,timestamp with time zone,,NO,
+public,dag_run_note,updated_at,timestamp with time zone,,NO,
+public,dag_schedule_dataset_reference,dataset_id,integer,,NO,
+public,dag_schedule_dataset_reference,dag_id,character varying,250,NO,
+public,dag_schedule_dataset_reference,created_at,timestamp with time zone,,NO,
+public,dag_schedule_dataset_reference,updated_at,timestamp with time zone,,NO,
+public,dag_tag,name,character varying,100,NO,
+public,dag_tag,dag_id,character varying,250,NO,
+public,dag_warning,dag_id,character varying,250,NO,
+public,dag_warning,warning_type,character varying,50,NO,
+public,dag_warning,message,text,,NO,
+public,dag_warning,timestamp,timestamp with time zone,,NO,
+public,dagrun_dataset_event,dag_run_id,integer,,NO,
+public,dagrun_dataset_event,event_id,integer,,NO,
+public,daily_search_metrics,date,date,,YES,
+public,daily_search_metrics,total_searches,bigint,,YES,
+public,daily_search_metrics,unique_users,bigint,,YES,
+public,daily_search_metrics,avg_response_time_seconds,numeric,,YES,
+public,daily_search_metrics,click_through_rate,double precision,,YES,
+public,dataset,id,integer,,NO,nextval('dataset_id_seq'::regclass)
+public,dataset,uri,character varying,3000,NO,
+public,dataset,extra,json,,NO,
+public,dataset,created_at,timestamp with time zone,,NO,
+public,dataset,updated_at,timestamp with time zone,,NO,
+public,dataset,is_orphaned,boolean,,NO,false
+public,dataset_dag_run_queue,dataset_id,integer,,NO,
+public,dataset_dag_run_queue,target_dag_id,character varying,250,NO,
+public,dataset_dag_run_queue,created_at,timestamp with time zone,,NO,
+public,dataset_event,id,integer,,NO,nextval('dataset_event_id_seq'::regclass)
+public,dataset_event,dataset_id,integer,,NO,
+public,dataset_event,extra,json,,NO,
+public,dataset_event,source_task_id,character varying,250,YES,
+public,dataset_event,source_dag_id,character varying,250,YES,
+public,dataset_event,source_run_id,character varying,250,YES,
+public,dataset_event,source_map_index,integer,,YES,'-1'::integer
+public,dataset_event,timestamp,timestamp with time zone,,NO,
+public,domain_expertise_analytics,id,integer,,NO,nextval('domain_expertise_analytics_id_seq'::regclass)
+public,domain_expertise_analytics,domain_name,character varying,255,NO,
+public,domain_expertise_analytics,field_name,character varying,255,YES,
+public,domain_expertise_analytics,subfield_name,character varying,255,YES,
+public,domain_expertise_analytics,expert_count,integer,,YES,0
+public,domain_expertise_analytics,match_count,integer,,YES,0
+public,domain_expertise_analytics,last_updated,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,domain_matching_metrics,domain_name,character varying,255,YES,
+public,domain_matching_metrics,expert_count,integer,,YES,
+public,domain_matching_metrics,match_count,integer,,YES,
+public,domain_matching_metrics,match_rate,double precision,,YES,
+public,domain_matching_metrics,active_experts,bigint,,YES,
+public,expert_matching_logs,id,integer,,NO,nextval('expert_matching_logs_id_seq'::regclass)
+public,expert_matching_logs,expert_id,character varying,255,NO,
+public,expert_matching_logs,matched_expert_id,character varying,255,NO,
+public,expert_matching_logs,similarity_score,double precision,,YES,
+public,expert_matching_logs,shared_domains,jsonb,,YES,
+public,expert_matching_logs,shared_fields,integer,,YES,
+public,expert_matching_logs,shared_skills,integer,,YES,
+public,expert_matching_logs,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,expert_matching_logs,successful,boolean,,YES,true
+public,expert_matching_metrics,expert_id,character varying,255,YES,
+public,expert_matching_metrics,total_matches,bigint,,YES,
+public,expert_matching_metrics,avg_similarity,double precision,,YES,
+public,expert_matching_metrics,avg_shared_domains,double precision,,YES,
+public,expert_matching_metrics,unique_matches,bigint,,YES,
+public,expert_matching_metrics,success_rate,double precision,,YES,
+public,expert_messages,id,integer,,NO,nextval('expert_messages_id_seq'::regclass)
+public,expert_messages,sender_id,integer,,YES,
+public,expert_messages,receiver_id,integer,,YES,
+public,expert_messages,content,text,,YES,
+public,expert_messages,draft,boolean,,YES,true
+public,expert_messages,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,expert_messages,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,expert_processing_logs,id,integer,,NO,nextval('expert_processing_logs_id_seq'::regclass)
+public,expert_processing_logs,expert_id,character varying,255,YES,
+public,expert_processing_logs,processing_time,double precision,,YES,
+public,expert_processing_logs,domains_count,integer,,YES,
+public,expert_processing_logs,fields_count,integer,,YES,
+public,expert_processing_logs,success,boolean,,YES,
+public,expert_processing_logs,error_message,text,,YES,
+public,expert_processing_logs,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,expert_search_metrics,expert_id,character varying,255,YES,
+public,expert_search_metrics,total_appearances,bigint,,YES,
+public,expert_search_metrics,avg_rank,numeric,,YES,
+public,expert_search_metrics,click_through_rate,double precision,,YES,
+public,expert_searches,id,integer,,NO,nextval('expert_searches_id_seq'::regclass)
+public,expert_searches,search_id,integer,,YES,
+public,expert_searches,expert_id,character varying,255,YES,
+public,expert_searches,rank_position,integer,,YES,
+public,expert_searches,clicked,boolean,,YES,false
+public,expert_searches,click_timestamp,timestamp without time zone,,YES,
+public,expert_searches,session_duration,interval,,YES,
+public,expert_summary_logs,id,integer,,NO,nextval('expert_summary_logs_id_seq'::regclass)
+public,expert_summary_logs,expert_id,character varying,255,YES,
+public,expert_summary_logs,total_domains,integer,,YES,
+public,expert_summary_logs,total_fields,integer,,YES,
+public,expert_summary_logs,total_subfields,integer,,YES,
+public,expert_summary_logs,expertise_depth,integer,,YES,
+public,expert_summary_logs,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,expertise_categories,id,integer,,NO,nextval('expertise_categories_id_seq'::regclass)
+public,expertise_categories,expert_orcid,text,,YES,
+public,expertise_categories,original_term,text,,YES,
+public,expertise_categories,domain,text,,YES,
+public,expertise_categories,field,text,,YES,
+public,expertise_categories,subfield,text,,YES,
+public,expertise_categories,created_at,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,experts_expert,id,integer,,NO,nextval('experts_expert_id_seq'::regclass)
+public,experts_expert,first_name,character varying,255,NO,
+public,experts_expert,last_name,character varying,255,NO,
+public,experts_expert,designation,character varying,255,YES,
+public,experts_expert,theme,character varying,255,YES,
+public,experts_expert,unit,character varying,255,YES,
+public,experts_expert,contact_details,character varying,255,YES,
+public,experts_expert,knowledge_expertise,jsonb,,YES,
+public,experts_expert,orcid,character varying,255,YES,
+public,experts_expert,domains,ARRAY,,YES,
+public,experts_expert,fields,ARRAY,,YES,
+public,experts_expert,subfields,ARRAY,,YES,
+public,experts_expert,password,character varying,255,YES,
+public,experts_expert,is_superuser,boolean,,YES,false
+public,experts_expert,is_staff,boolean,,YES,false
+public,experts_expert,is_active,boolean,,YES,true
+public,experts_expert,last_login,timestamp with time zone,,YES,
+public,experts_expert,date_joined,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,experts_expert,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,experts_expert,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,experts_expert,bio,text,,YES,
+public,experts_expert,email,character varying,200,YES,
+public,experts_expert,middle_name,character varying,200,YES,
+public,experts_expert,normalized_domains,ARRAY,,YES,'{}'::text[]
+public,experts_expert,normalized_fields,ARRAY,,YES,'{}'::text[]
+public,experts_expert,normalized_skills,ARRAY,,YES,'{}'::text[]
+public,experts_expert,keywords,ARRAY,,YES,'{}'::text[]
+public,experts_expert,search_text,text,,YES,
+public,experts_expert,last_updated,timestamp with time zone,,YES,now()
+public,import_error,id,integer,,NO,nextval('import_error_id_seq'::regclass)
+public,import_error,timestamp,timestamp with time zone,,YES,
+public,import_error,filename,character varying,1024,YES,
+public,import_error,stacktrace,text,,YES,
+public,job,id,integer,,NO,nextval('job_id_seq'::regclass)
+public,job,dag_id,character varying,250,YES,
+public,job,state,character varying,20,YES,
+public,job,job_type,character varying,30,YES,
+public,job,start_date,timestamp with time zone,,YES,
+public,job,end_date,timestamp with time zone,,YES,
+public,job,latest_heartbeat,timestamp with time zone,,YES,
+public,job,executor_class,character varying,500,YES,
+public,job,hostname,character varying,500,YES,
+public,job,unixname,character varying,1000,YES,
+public,log,id,integer,,NO,nextval('log_id_seq'::regclass)
+public,log,dttm,timestamp with time zone,,YES,
+public,log,dag_id,character varying,250,YES,
+public,log,task_id,character varying,250,YES,
+public,log,map_index,integer,,YES,
+public,log,event,character varying,30,YES,
+public,log,execution_date,timestamp with time zone,,YES,
+public,log,owner,character varying,500,YES,
+public,log,extra,text,,YES,
+public,log_template,id,integer,,NO,nextval('log_template_id_seq'::regclass)
+public,log_template,filename,text,,NO,
+public,log_template,elasticsearch_id,text,,NO,
+public,log_template,created_at,timestamp with time zone,,NO,
+public,publication_tags,doi,character varying,255,NO,
+public,publication_tags,tag_id,integer,,NO,
+public,publications_ai,doi,character varying,255,NO,
+public,publications_ai,title,text,,YES,
+public,publications_ai,abstract,text,,YES,
+public,publications_ai,summary,text,,YES,
+public,query_history_ai,query_id,integer,,NO,nextval('query_history_ai_query_id_seq'::regclass)
+public,query_history_ai,query,text,,YES,
+public,query_history_ai,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,query_history_ai,result_count,integer,,YES,
+public,query_history_ai,search_type,character varying,50,YES,
+public,query_history_ai,user_id,text,,YES,
+public,query_predictions,id,integer,,NO,nextval('query_predictions_id_seq'::regclass)
+public,query_predictions,partial_query,text,,NO,
+public,query_predictions,predicted_query,text,,NO,
+public,query_predictions,selected,boolean,,YES,false
+public,query_predictions,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,query_predictions,confidence_score,double precision,,YES,
+public,query_predictions,user_id,character varying,255,YES,
+public,rendered_task_instance_fields,dag_id,character varying,250,NO,
+public,rendered_task_instance_fields,task_id,character varying,250,NO,
+public,rendered_task_instance_fields,run_id,character varying,250,NO,
+public,rendered_task_instance_fields,map_index,integer,,NO,'-1'::integer
+public,rendered_task_instance_fields,rendered_fields,json,,NO,
+public,rendered_task_instance_fields,k8s_pod_yaml,json,,YES,
+public,resources_resource,id,integer,,NO,nextval('resources_resource_id_seq'::regclass)
+public,resources_resource,title,text,,NO,
+public,resources_resource,doi,character varying,255,YES,
+public,resources_resource,authors,ARRAY,,YES,
+public,resources_resource,domains,ARRAY,,YES,
+public,resources_resource,type,character varying,50,YES,'publication'::character varying
+public,resources_resource,publication_year,integer,,YES,
+public,resources_resource,summary,text,,YES,
+public,resources_resource,source,character varying,50,YES,'openalex'::character varying
+public,resources_resource,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,roles_role,id,integer,,NO,nextval('roles_role_id_seq'::regclass)
+public,roles_role,name,character varying,255,YES,
+public,roles_role,description,character varying,255,YES,
+public,roles_role,active,boolean,,YES,true
+public,roles_role,permissions,jsonb,,YES,
+public,roles_role,created_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,roles_role,updated_at,timestamp with time zone,,YES,CURRENT_TIMESTAMP
+public,roles_role,default_expert_role,boolean,,YES,false
+public,search_logs,id,integer,,NO,nextval('search_logs_id_seq'::regclass)
+public,search_logs,query,text,,NO,
+public,search_logs,user_id,character varying,255,YES,
+public,search_logs,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,search_logs,response_time,interval,,YES,
+public,search_logs,result_count,integer,,YES,
+public,search_logs,clicked,boolean,,YES,false
+public,search_logs,search_type,character varying,50,YES,
+public,search_logs,success_rate,double precision,,YES,
+public,search_logs,page_number,integer,,YES,1
+public,search_logs,filters,jsonb,,YES,
+public,search_performance,id,integer,,NO,nextval('search_performance_id_seq'::regclass)
+public,search_performance,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,search_performance,avg_response_time,interval,,YES,
+public,search_performance,cache_hit_rate,double precision,,YES,
+public,search_performance,error_rate,double precision,,YES,
+public,search_performance,total_queries,integer,,YES,
+public,search_performance,unique_users,integer,,YES,
+public,search_sessions,id,integer,,NO,nextval('search_sessions_id_seq'::regclass)
+public,search_sessions,user_id,character varying,255,YES,
+public,search_sessions,start_timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,search_sessions,end_timestamp,timestamp without time zone,,YES,
+public,search_sessions,query_count,integer,,YES,1
+public,search_sessions,successful_searches,integer,,YES,0
+public,sentiment_analysis_metrics,time_period,timestamp without time zone,,YES,
+public,sentiment_analysis_metrics,avg_sentiment,double precision,,YES,
+public,sentiment_analysis_metrics,avg_satisfaction,double precision,,YES,
+public,sentiment_analysis_metrics,avg_urgency,double precision,,YES,
+public,sentiment_analysis_metrics,avg_clarity,double precision,,YES,
+public,sentiment_analysis_metrics,total_interactions,bigint,,YES,
+public,sentiment_analysis_metrics,emotions,ARRAY,,YES,
+public,sentiment_metrics,id,integer,,NO,nextval('sentiment_metrics_id_seq'::regclass)
+public,sentiment_metrics,interaction_id,integer,,YES,
+public,sentiment_metrics,sentiment_score,double precision,,YES,
+public,sentiment_metrics,emotion_labels,ARRAY,,YES,
+public,sentiment_metrics,satisfaction_score,double precision,,YES,
+public,sentiment_metrics,urgency_score,double precision,,YES,
+public,sentiment_metrics,clarity_score,double precision,,YES,
+public,sentiment_metrics,timestamp,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,sentiment_trends,id,integer,,NO,nextval('sentiment_trends_id_seq'::regclass)
+public,sentiment_trends,session_id,text,,YES,
+public,sentiment_trends,avg_sentiment,double precision,,YES,
+public,sentiment_trends,avg_satisfaction,double precision,,YES,
+public,sentiment_trends,period_start,timestamp without time zone,,YES,
+public,sentiment_trends,period_end,timestamp without time zone,,YES,
+public,serialized_dag,dag_id,character varying,250,NO,
+public,serialized_dag,fileloc,character varying,2000,NO,
+public,serialized_dag,fileloc_hash,bigint,,NO,
+public,serialized_dag,data,json,,YES,
+public,serialized_dag,data_compressed,bytea,,YES,
+public,serialized_dag,last_updated,timestamp with time zone,,NO,
+public,serialized_dag,dag_hash,character varying,32,NO,
+public,serialized_dag,processor_subdir,character varying,2000,YES,
+public,session,id,integer,,NO,nextval('session_id_seq'::regclass)
+public,session,session_id,character varying,255,YES,
+public,session,data,bytea,,YES,
+public,session,expiry,timestamp without time zone,,YES,
+public,sla_miss,task_id,character varying,250,NO,
+public,sla_miss,dag_id,character varying,250,NO,
+public,sla_miss,execution_date,timestamp with time zone,,NO,
+public,sla_miss,email_sent,boolean,,YES,
+public,sla_miss,timestamp,timestamp with time zone,,YES,
+public,sla_miss,description,text,,YES,
+public,sla_miss,notification_sent,boolean,,YES,
+public,slot_pool,id,integer,,NO,nextval('slot_pool_id_seq'::regclass)
+public,slot_pool,pool,character varying,256,YES,
+public,slot_pool,slots,integer,,YES,
+public,slot_pool,description,text,,YES,
+public,slot_pool,include_deferred,boolean,,NO,
+public,tags,tag_id,integer,,NO,nextval('tags_tag_id_seq'::regclass)
+public,tags,tag_name,character varying,255,NO,
+public,tags,tag_type,character varying,50,YES,'concept'::character varying
+public,tags,additional_metadata,jsonb,,YES,
+public,task_fail,id,integer,,NO,nextval('task_fail_id_seq'::regclass)
+public,task_fail,task_id,character varying,250,NO,
+public,task_fail,dag_id,character varying,250,NO,
+public,task_fail,run_id,character varying,250,NO,
+public,task_fail,map_index,integer,,NO,'-1'::integer
+public,task_fail,start_date,timestamp with time zone,,YES,
+public,task_fail,end_date,timestamp with time zone,,YES,
+public,task_fail,duration,integer,,YES,
+public,task_instance,task_id,character varying,250,NO,
+public,task_instance,dag_id,character varying,250,NO,
+public,task_instance,run_id,character varying,250,NO,
+public,task_instance,map_index,integer,,NO,'-1'::integer
+public,task_instance,start_date,timestamp with time zone,,YES,
+public,task_instance,end_date,timestamp with time zone,,YES,
+public,task_instance,duration,double precision,,YES,
+public,task_instance,state,character varying,20,YES,
+public,task_instance,try_number,integer,,YES,
+public,task_instance,max_tries,integer,,YES,'-1'::integer
+public,task_instance,hostname,character varying,1000,YES,
+public,task_instance,unixname,character varying,1000,YES,
+public,task_instance,job_id,integer,,YES,
+public,task_instance,pool,character varying,256,NO,
+public,task_instance,pool_slots,integer,,NO,
+public,task_instance,queue,character varying,256,YES,
+public,task_instance,priority_weight,integer,,YES,
+public,task_instance,operator,character varying,1000,YES,
+public,task_instance,custom_operator_name,character varying,1000,YES,
+public,task_instance,queued_dttm,timestamp with time zone,,YES,
+public,task_instance,queued_by_job_id,integer,,YES,
+public,task_instance,pid,integer,,YES,
+public,task_instance,executor_config,bytea,,YES,
+public,task_instance,updated_at,timestamp with time zone,,YES,
+public,task_instance,external_executor_id,character varying,250,YES,
+public,task_instance,trigger_id,integer,,YES,
+public,task_instance,trigger_timeout,timestamp without time zone,,YES,
+public,task_instance,next_method,character varying,1000,YES,
+public,task_instance,next_kwargs,json,,YES,
+public,task_instance_note,user_id,integer,,YES,
+public,task_instance_note,task_id,character varying,250,NO,
+public,task_instance_note,dag_id,character varying,250,NO,
+public,task_instance_note,run_id,character varying,250,NO,
+public,task_instance_note,map_index,integer,,NO,
+public,task_instance_note,content,character varying,1000,YES,
+public,task_instance_note,created_at,timestamp with time zone,,NO,
+public,task_instance_note,updated_at,timestamp with time zone,,NO,
+public,task_map,dag_id,character varying,250,NO,
+public,task_map,task_id,character varying,250,NO,
+public,task_map,run_id,character varying,250,NO,
+public,task_map,map_index,integer,,NO,
+public,task_map,length,integer,,NO,
+public,task_map,keys,json,,YES,
+public,task_outlet_dataset_reference,dataset_id,integer,,NO,
+public,task_outlet_dataset_reference,dag_id,character varying,250,NO,
+public,task_outlet_dataset_reference,task_id,character varying,250,NO,
+public,task_outlet_dataset_reference,created_at,timestamp with time zone,,NO,
+public,task_outlet_dataset_reference,updated_at,timestamp with time zone,,NO,
+public,task_reschedule,id,integer,,NO,nextval('task_reschedule_id_seq'::regclass)
+public,task_reschedule,task_id,character varying,250,NO,
+public,task_reschedule,dag_id,character varying,250,NO,
+public,task_reschedule,run_id,character varying,250,NO,
+public,task_reschedule,map_index,integer,,NO,'-1'::integer
+public,task_reschedule,try_number,integer,,NO,
+public,task_reschedule,start_date,timestamp with time zone,,NO,
+public,task_reschedule,end_date,timestamp with time zone,,NO,
+public,task_reschedule,duration,integer,,NO,
+public,task_reschedule,reschedule_date,timestamp with time zone,,NO,
+public,term_frequencies,term,character varying,255,NO,
+public,term_frequencies,frequency,integer,,YES,1
+public,term_frequencies,expert_id,integer,,YES,
+public,term_frequencies,last_updated,timestamp without time zone,,YES,CURRENT_TIMESTAMP
+public,trigger,id,integer,,NO,nextval('trigger_id_seq'::regclass)
+public,trigger,classpath,character varying,1000,NO,
+public,trigger,kwargs,json,,NO,
+public,trigger,created_date,timestamp with time zone,,NO,
+public,trigger,triggerer_id,integer,,YES,
+public,variable,id,integer,,NO,nextval('variable_id_seq'::regclass)
+public,variable,key,character varying,250,YES,
+public,variable,val,text,,YES,
+public,variable,description,text,,YES,
+public,variable,is_encrypted,boolean,,YES,
+public,xcom,dag_run_id,integer,,NO,
+public,xcom,task_id,character varying,250,NO,
+public,xcom,map_index,integer,,NO,'-1'::integer
+public,xcom,key,character varying,512,NO,
+public,xcom,dag_id,character varying,250,NO,
+public,xcom,run_id,character varying,250,NO,
+public,xcom,value,bytea,,YES,
+public,xcom,timestamp,timestamp with time zone,,NO,
