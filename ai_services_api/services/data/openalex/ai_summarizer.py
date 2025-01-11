@@ -154,74 +154,82 @@ class TextSummarizer:
         wait=wait_exponential(multiplier=1, min=4, max=10)
     )
     def generate_topics(self, publications: List[Dict], num_topics: int = 10) -> List[str]:
-        """Generate topics based on publication data."""
+        """Generate broader research topics based on publication data."""
         try:
             # Prepare text for topic generation
             corpus = []
             for pub in publications:
                 text = f"{pub['title']} {pub.get('summary', '')}"
                 corpus.append(text)
-            
+                
             combined_text = "\n\n".join(corpus[:100])
             
             prompt = f"""
-            Based on the following research publications, generate {num_topics} distinct broad academic topics.
-            Consider the main themes, methodologies, and fields of study present in the publications.
+            Based on the following publications, generate {num_topics} broad research topics.
             
-            Return only the topic names, exactly one per line, without any hyphens, numbers, or additional text.
-            Each topic should be 2-4 words long and represent a clear research area.
-
+            Requirements:
+            - Each topic should be 2-4 words
+            - Topics should be broad enough to group similar research
+            - Avoid location-specific topics
+            - Focus on research areas, not specific implementations
+            
+            Examples of good topics:
+            Reproductive Healthcare
+            Educational Access
+            Public Health Systems
+            Disease Prevention
+            Healthcare Equity
+            
+            Return only the topic names, one per line, without any additional text.
+            
             Publications:
             {combined_text}
             """
             
             response = self.model.generate_content(prompt)
             if not response.text:
-                logger.warning("Empty response from Gemini")
+                logger.warning("Empty response from model")
                 return []
                 
-            topics = response.text.strip().split('\n')
-            
             # Clean and validate topics
-            cleaned_topics = []
-            for topic in topics:
-                # Remove hyphens, leading/trailing spaces, and other unwanted characters
+            topics = []
+            for topic in response.text.strip().split('\n'):
                 topic = topic.strip('- ').strip()
-                if topic and len(topic.split()) <= 4:
-                    cleaned_topics.append(topic)
-            
-            cleaned_topics = cleaned_topics[:num_topics]
-            logger.info(f"Generated {len(cleaned_topics)} topics")
-            return cleaned_topics
+                if topic and 2 <= len(topic.split()) <= 4:
+                    topics.append(topic)
+                    
+            topics = topics[:num_topics]
+            logger.info(f"Generated {len(topics)} topics")
+            return topics
             
         except Exception as e:
             logger.error(f"Error generating topics: {e}")
             raise
 
     def assign_topics(self, publication: Dict, available_topics: List[str]) -> List[str]:
-        """Assign topics to a single publication."""
+        """Assign broader topics to a single publication."""
         try:
             if not available_topics:
                 logger.warning("No available topics to assign")
                 return []
-
+                
             text = f"{publication['title']} {publication.get('summary', '')}"
             
             prompt = f"""
-            Given the following publication, assign the most relevant topics from the available list.
-            Choose only topics that strongly match the publication's content.
-            Return exactly one topic name per line, without any hyphens or additional text.
+            Given the following publication, assign 2-3 most relevant topics from the list.
+            Only choose topics that strongly match the publication's content.
+            Return exactly one topic per line.
             
             Publication:
             {text}
-
+            
             Available topics:
             {', '.join(available_topics)}
             """
             
             response = self.model.generate_content(prompt)
             if not response.text:
-                logger.warning("Empty response from Gemini for topic assignment")
+                logger.warning("Empty response from model")
                 return []
                 
             # Clean and validate assigned topics
@@ -230,12 +238,12 @@ class TextSummarizer:
                 topic = topic.strip('- ').strip()
                 if topic in available_topics:
                     assigned_topics.append(topic)
-            
+                    
             if assigned_topics:
                 logger.info(f"Assigned {len(assigned_topics)} topics to publication")
             else:
                 logger.warning("No topics assigned to publication")
-            
+                
             return assigned_topics
             
         except Exception as e:
