@@ -36,6 +36,10 @@ class PublicationProcessor:
                     tag_id INTEGER,
                     PRIMARY KEY (doi, tag_id)
                 )
+                """,
+                """
+                ALTER TABLE resources_resource 
+                ADD COLUMN IF NOT EXISTS topics TEXT[]
                 """
             ]
             
@@ -63,6 +67,10 @@ class PublicationProcessor:
                 """
                 CREATE INDEX IF NOT EXISTS idx_publication_tags 
                 ON publication_tags(doi, tag_id);
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS idx_resource_topics 
+                ON resources_resource USING gin(topics);
                 """
             ]
             
@@ -72,29 +80,7 @@ class PublicationProcessor:
             logger.info("Database tables and indexes verified/created successfully")
         except Exception as e:
             logger.error(f"Error setting up database indexes: {e}")
-
-    def _doi_exists(self, doi: str) -> bool:
-        """
-        Check if a DOI already exists in the database.
-        
-        Args:
-            doi: Digital Object Identifier to check
-            
-        Returns:
-            bool: True if DOI exists, False otherwise
-        """
-        try:
-            result = self.db.execute("""
-                SELECT EXISTS (
-                    SELECT 1 
-                    FROM resources_resource 
-                    WHERE doi = %s
-                )
-            """, (doi,))
-            return result[0][0] if result else False
-        except Exception as e:
-            logger.error(f"Error checking DOI existence: {e}")
-            return False
+            raise
 
     def _check_publication_exists(self, title: str, doi: Optional[str] = None) -> tuple[bool, Optional[str]]:
         """

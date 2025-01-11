@@ -122,6 +122,46 @@ class DatabaseManager:
             logger.error(f"Error adding/updating publication: {e}")
             raise
 
+    def update_publication_topics(self, publication_id: str, topics: List[str]) -> None:
+        """
+        Update the topics of a publication.
+        
+        Args:
+            publication_id: ID of the publication
+            topics: List of assigned topic strings
+        """
+        try:
+            # Format topics as PostgreSQL array
+            if not topics:
+                topics_array = '{}'  # Empty PostgreSQL array
+            else:
+                # Escape single quotes and properly format array
+                escaped_topics = [topic.replace("'", "''") for topic in topics]
+                topics_array = '{' + ','.join(f'"{topic}"' for topic in escaped_topics) + '}'
+            
+            self.execute(
+                "UPDATE resources_resource SET topics = %s WHERE id = %s",
+                (topics_array, publication_id)
+            )
+            logger.info(f"Updated topics for publication {publication_id}: {topics}")
+        except Exception as e:
+            logger.error(f"Error updating publication topics: {e}")
+            raise
+            
+    def get_all_publications(self) -> List[Dict]:
+        """
+        Retrieve all publications from the database.
+        
+        Returns:
+            List of publication dictionaries
+        """
+        try:
+            result = self.execute("SELECT * FROM resources_resource")
+            return [dict(zip([column[0] for column in self.cur.description], row)) for row in result]
+        except Exception as e:
+            logger.error(f"Error retrieving publications: {e}")
+            return []
+
     def update_expert(self, expert_id: str, updates: Dict[str, Any]) -> None:
         """Update expert information."""
         try:

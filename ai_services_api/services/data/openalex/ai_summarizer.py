@@ -1,7 +1,7 @@
 import os
 import logging
 import google.generativeai as genai
-from typing import Optional
+from typing import Optional, List, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logging.basicConfig(
@@ -78,16 +78,7 @@ class TextSummarizer:
             return "Failed to generate content due to technical issues"
 
     def _create_prompt(self, title: str, abstract: str) -> str:
-        """
-        Create a prompt for the summarization model.
-        
-        Args:
-            title: Title of the publication
-            abstract: Abstract of the publication
-            
-        Returns:
-            str: Formatted prompt
-        """
+        """Create a prompt for the summarization model."""
         return f"""
         Please create a concise summary combining the following title and abstract.
         
@@ -105,15 +96,7 @@ class TextSummarizer:
         """
 
     def _create_title_only_prompt(self, title: str) -> str:
-        """
-        Create a prompt for generating a brief description from title only.
-        
-        Args:
-            title: Title of the publication
-            
-        Returns:
-            str: Formatted prompt
-        """
+        """Create a prompt for generating a brief description from title only."""
         return f"""
         Please create a brief description based on the following academic publication title.
         
@@ -129,15 +112,7 @@ class TextSummarizer:
         """
 
     def _clean_summary(self, summary: str) -> str:
-        """
-        Clean and format the generated summary.
-        
-        Args:
-            summary: Raw summary from the model
-            
-        Returns:
-            str: Cleaned summary
-        """
+        """Clean and format the generated summary."""
         try:
             # Basic cleaning
             cleaned = summary.strip()
@@ -173,6 +148,99 @@ class TextSummarizer:
         except Exception as e:
             logger.error(f"Error cleaning summary: {e}")
             return summary
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10)
+    )
+    def generate_topics(self, publications: List[Dict], num_topics: int = 10) -> List[str]:
+        """Generate topics based on publication data."""
+        try:
+            # Prepare text for topic generation
+            corpus = []
+            for pub in publications:
+                text = f"{pub['title']} {pub.get('summary', '')}"
+                corpus.append(text)
+            
+            combined_text = "\n\n".join(corpus[:100])
+            
+            prompt = f"""
+            Based on the following research publications, generate {num_topics} distinct broad academic topics.
+            Consider the main themes, methodologies, and fields of study present in the publications.
+            
+            Return only the topic names, exactly one per line, without any hyphens, numbers, or additional text.
+            Each topic should be 2-4 words long and represent a clear research area.
+
+            Publications:
+            {combined_text}
+            """
+            
+            response = self.model.generate_content(prompt)
+            if not response.text:
+                logger.warning("Empty response from Gemini")
+                return []
+                
+            topics = response.text.strip().split('\n')
+            
+            # Clean and validate topics
+            cleaned_topics = []
+            for topic in topics:
+                # Remove hyphens, leading/trailing spaces, and other unwanted characters
+                topic = topic.strip('- ').strip()
+                if topic and len(topic.split()) <= 4:
+                    cleaned_topics.append(topic)
+            
+            cleaned_topics = cleaned_topics[:num_topics]
+            logger.info(f"Generated {len(cleaned_topics)} topics")
+            return cleaned_topics
+            
+        except Exception as e:
+            logger.error(f"Error generating topics: {e}")
+            raise
+
+    def assign_topics(self, publication: Dict, available_topics: List[str]) -> List[str]:
+        """Assign topics to a single publication."""
+        try:
+            if not available_topics:
+                logger.warning("No available topics to assign")
+                return []
+
+            text = f"{publication['title']} {publication.get('summary', '')}"
+            
+            prompt = f"""
+            Given the following publication, assign the most relevant topics from the available list.
+            Choose only topics that strongly match the publication's content.
+            Return exactly one topic name per line, without any hyphens or additional text.
+            
+            Publication:
+            {text}
+
+            Available topics:
+            {', '.join(available_topics)}
+            """
+            
+            response = self.model.generate_content(prompt)
+            if not response.text:
+                logger.warning("Empty response from Gemini for topic assignment")
+                return []
+                
+            # Clean and validate assigned topics
+            assigned_topics = []
+            for topic in response.text.strip().split('\n'):
+                topic = topic.strip('- ').strip()
+                if topic in available_topics:
+                    assigned_topics.append(topic)
+            
+            if assigned_topics:
+                logger.info(f"Assigned {len(assigned_topics)} topics to publication")
+            else:
+                logger.warning("No topics assigned to publication")
+            
+            return assigned_topics
+            
+        except Exception as e:
+            logger.error(f"Error assigning topics: {e}")
+            return []
 
     def __del__(self):
         """Cleanup any resources."""

@@ -141,7 +141,7 @@ async def process_data(args):
                 logger.info("="*50)
                 
                 knowhub_scraper = KnowhubScraper(summarizer=summarizer)
-                all_content = knowhub_scraper.fetch_all_content(limit=2)  # Fetch 2 items from each endpoint
+                all_content = knowhub_scraper.fetch_all_content(limit=2)
                 
                 for content_type, items in all_content.items():
                     if items:
@@ -169,7 +169,7 @@ async def process_data(args):
             try:
                 logger.info("Processing Research Nexus publications...")
                 research_nexus_scraper = ResearchNexusScraper(summarizer=summarizer)
-                research_nexus_publications = research_nexus_scraper.fetch_content(limit=2)  # Reduced to 2 for testing
+                research_nexus_publications = research_nexus_scraper.fetch_content(limit=2)
 
                 if research_nexus_publications:
                     for pub in research_nexus_publications:
@@ -190,7 +190,7 @@ async def process_data(args):
                 logger.info("="*50)
                 
                 website_scraper = WebsiteScraper(summarizer=summarizer)
-                website_publications = website_scraper.fetch_content(limit=2)  # Reduced to 2 for testing
+                website_publications = website_scraper.fetch_content(limit=2)
                 
                 if website_publications:
                     logger.info(f"\nProcessing {len(website_publications)} website publications")
@@ -212,6 +212,50 @@ async def process_data(args):
             finally:
                 if 'website_scraper' in locals():
                     website_scraper.close()
+
+            # Process topics for all publications
+            if not args.skip_topics:
+                try:
+                    logger.info("\n" + "="*50)
+                    logger.info("Starting topic classification...")
+                    logger.info("="*50)
+                    
+                    # Get all publications for topic processing
+                    publications = processor.db.get_all_publications()
+                    
+                    if publications:
+                        # Generate topics using Gemini
+                        topics = summarizer.generate_topics(publications)
+                        logger.info(f"Generated topics: {topics}")
+                        
+                        # Process publications in batches
+                        batch_size = 100
+                        total_processed = 0
+                        
+                        for i in range(0, len(publications), batch_size):
+                            batch = publications[i:i + batch_size]
+                            for pub in batch:
+                                try:
+                                    # Assign topics to publication
+                                    assigned_topics = summarizer.assign_topics(pub, topics)
+                                    
+                                    # Update database
+                                    processor.db.update_publication_topics(pub['id'], assigned_topics)
+                                    total_processed += 1
+                                    
+                                    if total_processed % 10 == 0:
+                                        logger.info(f"Processed {total_processed}/{len(publications)} publications")
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error processing publication {pub.get('id')}: {e}")
+                                    continue
+                        
+                        logger.info(f"\nCompleted topic classification for {total_processed} publications")
+                    else:
+                        logger.warning("No publications found for topic classification")
+                    
+                except Exception as e:
+                    logger.error(f"Error during topic classification: {e}")
 
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
@@ -265,6 +309,8 @@ async def main():
                        help='Skip search index creation')
     parser.add_argument('--skip-redis', action='store_true',
                        help='Skip Redis index creation')
+    parser.add_argument('--skip-topics', action='store_true',
+                       help='Skip topic classification')
     args = parser.parse_args()
 
     try:
