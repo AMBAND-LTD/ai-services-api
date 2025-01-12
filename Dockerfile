@@ -92,7 +92,7 @@ RUN mkdir -p /tmp/chrome-data /tmp/chrome-profile /var/run/chrome && \
 RUN chown root:root /usr/bin/chromium && \
     chmod 4755 /usr/bin/chromium
 
-# Directory Structure
+# Directory Structure with Updated Permissions
 RUN mkdir -p \
     /code/ai_services_api/services/search/models \
     /code/logs \
@@ -102,10 +102,12 @@ RUN mkdir -p \
     /opt/airflow/plugins \
     /opt/airflow/data \
     /code/scripts \
-    /code/tests
-
-# Set permissions for application directories
-RUN chown -R 1001:125 /code /opt/airflow && \
+    /code/tests && \
+    # Enhanced permissions for FAISS index directory
+    chmod -R 777 /code/ai_services_api/services/search/models && \
+    chmod -R 777 /code/ai_services_api/services/search && \
+    # General permissions for other directories
+    chown -R 1001:125 /code /opt/airflow && \
     chmod -R 775 /code /opt/airflow
 
 # Working Directory
@@ -115,9 +117,11 @@ WORKDIR /code
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Application Files
+# Application Files with updated permissions
 COPY --chown=1001:125 . .
-RUN chmod +x /code/scripts/init-script.sh
+RUN chmod +x /code/scripts/init-script.sh && \
+    # Ensure FAISS directory permissions persist after copy
+    chmod -R 777 /code/ai_services_api/services/search/models
 
 # Set Chrome flags
 ENV CHROME_FLAGS="--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-crashpad --disable-crash-reporter --no-first-run --test-type --disable-software-rasterizer --disable-default-apps --disable-setuid-sandbox --remote-debugging-port=9222"

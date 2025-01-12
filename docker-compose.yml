@@ -109,7 +109,6 @@ services:
   neo4j:
     image: neo4j:5.12.0
     container_name: neo4j
-    user: "${UID:-1001}:${GID:-125}"
     hostname: neo4j
     restart: always
     networks:
@@ -117,11 +116,12 @@ services:
     ports:
       - "7474:7474" 
       - "7687:7687"
-    entrypoint: ["bash", "-c", "sleep 10 && /startup/docker-entrypoint.sh neo4j"]
+    entrypoint: ["/startup/docker-entrypoint.sh", "neo4j"]
     environment:
       NEO4J_AUTH: none
-      NEO4J_server_memory_pagecache_size: 1G
-      NEO4J_server_memory_heap_initial__size: 1G
+      environment:
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_initial__size: 512M
       NEO4J_server_memory_heap_max__size: 1G
       NEO4J_dbms_transaction_timeout: 300s
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
@@ -134,10 +134,10 @@ services:
       - ./logs/neo4j:/logs:rw
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
-      interval: 60s
-      timeout: 45s
-      retries: 5
-      start_period: 300s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -299,7 +299,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
-      - ./:/code:ro
+      - ./:/code:rw
     depends_on:
       - airflow-scheduler
     networks:

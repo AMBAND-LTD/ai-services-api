@@ -1,12 +1,15 @@
 import os
 import logging
+import argparse
 import asyncio
+import sys
 from dotenv import load_dotenv
 
-from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor
+# Import necessary modules
+from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor 
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
-from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
 from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
 from ai_services_api.services.search.redis_index_manager import ExpertRedisIndexManager
 from ai_services_api.services.data.openalex.orcid_processor import OrcidProcessor
@@ -14,6 +17,7 @@ from ai_services_api.services.data.openalex.knowhub_scraper import KnowhubScrape
 from ai_services_api.services.data.openalex.website_scraper import WebsiteScraper
 from ai_services_api.services.data.openalex.researchnexus_scraper import ResearchNexusScraper
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s: %(message)s',
@@ -42,165 +46,231 @@ def setup_environment():
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-def initialize_graph():
-    """Initialize the Neo4j graph database."""
-    try:
-        graph_initializer = GraphDatabaseInitializer()
-        logger.info("Initializing graph database...")
-        graph_initializer.initialize_graph()
-        logger.info("Graph initialization complete!")
-        return True
-    except Exception as e:
-        logger.error(f"Graph initialization failed: {e}")
-        return False
-
-async def process_data(expertise_csv, skip_openalex, skip_publications):
-    """Process experts and publications data from multiple sources."""
-    # Initialize processors and scrapers
+async def process_data(args):
+    """Process publications data from multiple sources."""
     processor = OpenAlexProcessor()
-    orcid_processor = OrcidProcessor()
-    knowhub_scraper = KnowhubScraper()
-    website_scraper = WebsiteScraper()
-    research_nexus_scraper = ResearchNexusScraper()
+    summarizer = TextSummarizer()
     
     try:
-        # Process expert data
-        logger.info("Loading initial expert data...")
-        await processor.load_initial_experts(expertise_csv)
-        
-        if not skip_openalex:
-            logger.info("Updating experts with OpenAlex data...")
-            await processor.update_experts_with_openalex()
-            logger.info("Expert data enrichment complete!")
-        
-        if not skip_publications:
+        if not args.skip_publications:
             logger.info("Processing publications data...")
-            summarizer = TextSummarizer()
             pub_processor = PublicationProcessor(processor.db, summarizer)
             
-            # Process publications from different sources
-            sources = [
-                ('OpenAlex', processor, 'openalex'),
-                ('ORCID', orcid_processor, 'orcid'),
-                ('Knowhub', knowhub_scraper, 'knowhub'),
-                ('Website', website_scraper, 'website'),
-                ('Research Nexus', research_nexus_scraper, 'researchnexus')
-            ]
-            
-            for name, source_processor, source_name in sources:
+            # Process OpenAlex publications
+            if not args.skip_openalex:
                 try:
-                    logger.info(f"Processing {name} publications...")
-                    
-                    if source_name in ['openalex', 'orcid']:
-                        await source_processor.process_publications(pub_processor, source=source_name)
-                    elif source_name == 'knowhub':
-                        # Knowhub specific processing
-                        knowhub_publications = source_processor.fetch_publications(limit=10)
-                        for i, publication in enumerate(knowhub_publications):
-                            if i >= 10:
-                                break
-                            pub_processor.process_single_work(publication, source=source_name)
-                    elif source_name == 'website':
-                        try:
-                            # Website scraper processing
-                            website_publications = source_processor.fetch_content(limit=10)
-                            for publication in website_publications:
-                                try:
-                                    # Process each publication
-                                    pub_processor.process_single_work(publication, source=source_name)
-                                except Exception as e:
-                                    logger.error(f"Error processing website publication: {e}")
-                                    continue
-                        except Exception as e:
-                            logger.error(f"Error fetching website content: {e}")
-                    elif source_name == 'researchnexus':
-                        # Research Nexus processing
-                        research_nexus_publications = source_processor.fetch_content(limit=10)
-                        if research_nexus_publications:
-                            for i, publication in enumerate(research_nexus_publications):
-                                if i >= 10:
-                                    break
-                                pub_processor.process_single_work(publication, source=source_name)
-                    
-                    logger.info(f"{name} Publications processing complete!")
-                
+                    logger.info("Processing OpenAlex publications...")
+                    await processor.process_publications(pub_processor, source='openalex')
                 except Exception as e:
-                    logger.error(f"Error processing {name} publications: {e}")
-                    continue
-        
+                    logger.error(f"Error processing OpenAlex publications: {e}")
+
+            # Process ORCID publications
+            try:
+                logger.info("Processing ORCID publications...")
+                orcid_processor = OrcidProcessor()
+                await orcid_processor.process_publications(pub_processor, source='orcid')
+                orcid_processor.close()
+            except Exception as e:
+                logger.error(f"Error processing ORCID publications: {e}")
+
+            # Process KnowHub content
+            try:
+                logger.info("\n" + "="*50)
+                logger.info("Processing KnowHub content...")
+                logger.info("="*50)
+                
+                knowhub_scraper = KnowhubScraper(summarizer=summarizer)
+                all_content = knowhub_scraper.fetch_all_content(limit=2)
+                
+                for content_type, items in all_content.items():
+                    if items:
+                        logger.info(f"\nProcessing {len(items)} items from {content_type}")
+                        for item in items:
+                            try:
+                                pub_processor.process_single_work(item, source='knowhub')
+                                logger.info(f"Successfully processed {content_type} item: {item.get('title', 'Unknown Title')}")
+                            except Exception as e:
+                                logger.error(f"Error processing {content_type} item: {e}")
+                                continue
+                    else:
+                        logger.warning(f"No items found for {content_type}")
+                
+                knowhub_scraper.close()
+                logger.info("\nKnowHub content processing complete!")
+                
+            except Exception as e:
+                logger.error(f"Error processing KnowHub content: {e}")
+            finally:
+                if 'knowhub_scraper' in locals():
+                    knowhub_scraper.close()
+
+            # Process ResearchNexus publications
+            try:
+                logger.info("Processing Research Nexus publications...")
+                research_nexus_scraper = ResearchNexusScraper(summarizer=summarizer)
+                research_nexus_publications = research_nexus_scraper.fetch_content(limit=2)
+
+                if research_nexus_publications:
+                    for pub in research_nexus_publications:
+                        pub_processor.process_single_work(pub, source='researchnexus')
+                else:
+                    logger.warning("No Research Nexus publications found")
+
+            except Exception as e:
+                logger.error(f"Error processing Research Nexus publications: {e}")
+            finally:
+                if 'research_nexus_scraper' in locals():
+                    research_nexus_scraper.close()
+
+            # Process Website publications
+            try:
+                logger.info("\n" + "="*50)
+                logger.info("Processing Website publications...")
+                logger.info("="*50)
+                
+                website_scraper = WebsiteScraper(summarizer=summarizer)
+                website_publications = website_scraper.fetch_content(limit=2)
+                
+                if website_publications:
+                    logger.info(f"\nProcessing {len(website_publications)} website publications")
+                    for pub in website_publications:
+                        try:
+                            pub_processor.process_single_work(pub, source='website')
+                            logger.info(f"Successfully processed website publication: {pub.get('title', 'Unknown Title')}")
+                        except Exception as e:
+                            logger.error(f"Error processing website publication: {e}")
+                            continue
+                else:
+                    logger.warning("No website publications found")
+                    
+                website_scraper.close()
+                logger.info("\nWebsite publications processing complete!")
+                
+            except Exception as e:
+                logger.error(f"Error processing Website publications: {e}")
+            finally:
+                if 'website_scraper' in locals():
+                    website_scraper.close()
+
+            # Process topics for all publications
+            if not args.skip_topics:
+                try:
+                    logger.info("\n" + "="*50)
+                    logger.info("Starting topic classification...")
+                    logger.info("="*50)
+                    
+                    # Get all publications for topic processing
+                    publications = processor.db.get_all_publications()
+                    
+                    if publications:
+                        # Generate topics using Gemini
+                        topics = summarizer.generate_topics(publications)
+                        logger.info(f"Generated topics: {topics}")
+                        
+                        # Process publications in batches
+                        batch_size = 100
+                        total_processed = 0
+                        
+                        for i in range(0, len(publications), batch_size):
+                            batch = publications[i:i + batch_size]
+                            for pub in batch:
+                                try:
+                                    # Assign topics to publication
+                                    assigned_topics = summarizer.assign_topics(pub, topics)
+                                    
+                                    # Update database
+                                    processor.db.update_publication_topics(pub['id'], assigned_topics)
+                                    total_processed += 1
+                                    
+                                    if total_processed % 10 == 0:
+                                        logger.info(f"Processed {total_processed}/{len(publications)} publications")
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error processing publication {pub.get('id')}: {e}")
+                                    continue
+                        
+                        logger.info(f"\nCompleted topic classification for {total_processed} publications")
+                    else:
+                        logger.warning("No publications found for topic classification")
+                    
+                except Exception as e:
+                    logger.error(f"Error during topic classification: {e}")
+
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise
     finally:
-        # Ensure all resources are closed
         processor.close()
-        orcid_processor.close()
-        knowhub_scraper.close()
-        website_scraper.close()
-        research_nexus_scraper.close()
 
 def create_search_index():
     """Create FAISS search index."""
-    index_creator = ExpertSearchIndexManager()
     try:
+        index_creator = ExpertSearchIndexManager()
         logger.info("Creating FAISS search index...")
         success = index_creator.create_faiss_index()
+        
         if success:
             logger.info("FAISS index creation complete!")
             return True
-        else:
-            logger.error("Failed to create FAISS index")
-            return False
+        
+        logger.error("Failed to create FAISS index")
+        return False
+    
     except Exception as e:
         logger.error(f"FAISS index creation failed: {e}")
         return False
 
 def create_redis_index():
     """Create Redis search index."""
-    redis_creator = ExpertRedisIndexManager()
     try:
+        redis_creator = ExpertRedisIndexManager()
         logger.info("Creating Redis search index...")
+        
         if redis_creator.clear_redis_indexes():
             success = redis_creator.create_redis_index()
+            
             if success:
                 logger.info("Redis index creation complete!")
                 return True
+        
         logger.error("Failed to create Redis index")
         return False
+    
     except Exception as e:
         logger.error(f"Redis index creation failed: {e}")
         return False
 
-async def run_monthly_setup(expertise_csv='expertise.csv', skip_openalex=False, skip_publications=False, 
-                             skip_graph=False, skip_search=False, skip_redis=False):
-    """Execute monthly data processing tasks."""
+async def run_monthly_setup(
+    expertise_csv=None,  # Kept for compatibility but won't be used
+    skip_openalex=False,
+    skip_publications=False, 
+    skip_graph=False, 
+    skip_search=False, 
+    skip_redis=False,
+    skip_topics=False
+):
+    """Monthly setup process."""
     try:
         logger.info("Starting monthly setup process")
         
-        # Step 1: Setup environment
+        # Setup environment
         setup_environment()
         
-        # Step 2: Process data (this should populate the tables)
-        logger.info("Processing data...")
-        await process_data(expertise_csv, skip_openalex, skip_publications)
+        # Process data with args
+        args = argparse.Namespace(
+            expertise_csv=expertise_csv,
+            skip_openalex=skip_openalex,
+            skip_publications=skip_publications,
+            skip_topics=skip_topics
+        )
+        await process_data(args)
         
-        # Step 3: Initialize graph database (if not skipped)
-        if not skip_graph:
-            if not initialize_graph():
-                logger.error("Graph initialization failed")
-                raise RuntimeError("Graph initialization failed")
+        # Optional steps
+        if not skip_search and not create_search_index():
+            raise RuntimeError("FAISS index creation failed")
         
-        # Step 4: Create search index (if not skipped and data exists)
-        if not skip_search:
-            if not create_search_index():
-                logger.error("FAISS index creation failed")
-                raise RuntimeError("FAISS index creation failed")
-        
-        # Step 5: Create Redis index (if not skipped)
-        if not skip_redis:
-            if not create_redis_index():
-                logger.error("Redis index creation failed")
-                raise RuntimeError("Redis index creation failed")
+        if not skip_redis and not create_redis_index():
+            raise RuntimeError("Redis index creation failed")
         
         logger.info("Monthly setup completed successfully!")
         return True
@@ -209,5 +279,27 @@ async def run_monthly_setup(expertise_csv='expertise.csv', skip_openalex=False, 
         logger.error(f"Monthly setup failed: {e}")
         raise
 
+def main():
+    parser = argparse.ArgumentParser(description='Monthly Research Data Setup')
+    parser.add_argument('--expertise-csv', default=None)  # Kept for compatibility
+    parser.add_argument('--skip-openalex', action='store_true')
+    parser.add_argument('--skip-publications', action='store_true')
+    parser.add_argument('--skip-graph', action='store_true')
+    parser.add_argument('--skip-search', action='store_true')
+    parser.add_argument('--skip-redis', action='store_true')
+    parser.add_argument('--skip-topics', action='store_true')
+    
+    args = parser.parse_args()
+    
+    asyncio.run(run_monthly_setup(
+        expertise_csv=args.expertise_csv,
+        skip_openalex=args.skip_openalex,
+        skip_publications=args.skip_publications,
+        skip_graph=args.skip_graph,
+        skip_search=args.skip_search,
+        skip_redis=args.skip_redis,
+        skip_topics=args.skip_topics
+    ))
+
 if __name__ == "__main__":
-    asyncio.run(run_monthly_setup())
+    main()

@@ -85,41 +85,47 @@ class DatabaseManager:
             logger.error(f"Error adding expert {first_name} {last_name}: {e}")
             raise
 
-    def add_publication(self, doi: str, title: str, summary: str, 
-                       source: str = None, type: str = None,
-                       authors: List[str] = None, domains: List[str] = None,
-                       publication_year: Optional[int] = None) -> None:
+    def add_publication(self, 
+        title: str, 
+        summary: str, 
+        source: str = None, 
+        type: str = None,
+        authors: List[str] = None, 
+        domains: List[str] = None,
+        publication_year: Optional[int] = None,
+        doi: Optional[str] = None) -> None:
         """Add or update a publication in the database."""
         try:
-            # Check if the publication already exists
-            existing_publication = self.execute("""
-                SELECT doi FROM resources_resource WHERE doi = %s
-            """, (doi,))
-
-            if existing_publication:  # If publication exists
-                # Update the existing publication
-                self.execute("""
-                    UPDATE resources_resource
-                    SET title = %s,
-                        summary = %s,
-                        source = %s,
-                        type = %s,
-                        authors = %s,
-                        domains = %s,
-                        publication_year = %s
-                    WHERE doi = %s
-                """, (title, summary, source, type, authors, domains, publication_year, doi))
-                logger.info(f"Updated publication: {title}")
-            else:
-                # Insert a new publication
+            # Update or insert in a single operation
+            update_result = self.execute("""
+                UPDATE resources_resource
+                SET summary = COALESCE(%s, summary),
+                    doi = COALESCE(%s, doi),
+                    type = COALESCE(%s, type),
+                    authors = COALESCE(%s, authors),
+                    domains = COALESCE(%s, domains),
+                    publication_year = COALESCE(%s, publication_year)
+                WHERE (doi = %s) OR 
+                    (title = %s AND source = %s)
+                RETURNING id
+            """, (
+                summary, doi, type, authors, domains, publication_year,
+                doi, title, source
+            ))
+            
+            # If no existing record, insert new publication
+            if not update_result:
                 self.execute("""
                     INSERT INTO resources_resource 
                     (doi, title, summary, source, type, authors, domains, publication_year)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (doi, title, summary, source, type, authors, domains, publication_year))
-                logger.info(f"Added publication: {title}")
+                logger.info(f"Added new publication: {title}")
+            else:
+                logger.info(f"Updated existing publication: {title}")
+        
         except Exception as e:
-            logger.error(f"Error adding/updating publication: {e}")
+            logger.error(f"Error processing publication '{title}': {e}")
             raise
 
     def update_publication_topics(self, publication_id: str, topics: List[str]) -> None:
