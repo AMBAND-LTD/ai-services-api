@@ -27,9 +27,6 @@ def get_usage_metrics(
     start_date: datetime,
     end_date: datetime
 ) -> Dict[str, pd.DataFrame]:
-    """
-    Retrieve usage metrics with enhanced error handling and NULL value handling.
-    """
     start_time = time.time()
     metrics_template = {
         'activity_metrics': pd.DataFrame(),
@@ -41,75 +38,92 @@ def get_usage_metrics(
         setup_database_connection(conn)
         
         with conn.cursor() as cursor:
-            cursor.execute("""
-                WITH UserActivityMetrics AS (
+            query = """
+            WITH UserActivityMetrics AS (
+                SELECT 
+                    DATE(COALESCE(c.created_at, s.timestamp)) as date,
+                    COALESCE(COUNT(DISTINCT COALESCE(c.user_id, s.user_id)), 0) as total_users,
+                    COALESCE(COUNT(DISTINCT c.user_id), 0) as chat_users,
+                    COALESCE(COUNT(DISTINCT s.user_id), 0) as search_users,
+                    COALESCE(COUNT(c.id), 0) + COALESCE(COUNT(s.id), 0) as total_interactions
+                FROM (
                     SELECT 
-                        DATE(COALESCE(c.date, s.date)) as date,
-                        COALESCE(COUNT(DISTINCT COALESCE(c.user_id, s.user_id)), 0) as total_users,
-                        COALESCE(COUNT(DISTINCT c.user_id), 0) as chat_users,
-                        COALESCE(COUNT(DISTINCT s.user_id), 0) as search_users,
-                        COALESCE(SUM(COALESCE(c.chat_count, 0) + COALESCE(s.search_count, 0)), 0) as total_interactions
-                    FROM (
-                        SELECT 
-                            DATE(timestamp) as date,
-                            user_id,
-                            COUNT(*) as chat_count
-                        FROM chat_interactions
-                        WHERE timestamp BETWEEN %s AND %s
-                        GROUP BY DATE(timestamp), user_id
-                    ) c
-                    FULL OUTER JOIN (
-                        SELECT 
-                            DATE(timestamp) as date,
-                            user_id,
-                            COUNT(*) as search_count
-                        FROM search_logs
-                        WHERE timestamp BETWEEN %s AND %s
-                        GROUP BY DATE(timestamp), user_id
-                    ) s ON c.date = s.date AND c.user_id = s.user_id
-                    GROUP BY COALESCE(c.date, s.date)
-                ),
-                SessionMetrics AS (
+                        DATE(created_at) as created_at,
+                        user_id,
+                        id
+                    FROM chat_interactions
+                    WHERE created_at BETWEEN %s AND %s
+                    GROUP BY DATE(created_at), user_id, id
+                ) c
+                FULL OUTER JOIN (
                     SELECT 
-                        DATE(start_time) as date,
-                        COUNT(*) as total_sessions,
-                        COALESCE(AVG(EXTRACT(epoch FROM (end_time - start_time))), 0) as avg_session_duration,
-                        COALESCE(AVG(total_messages), 0) as avg_messages_per_session,
-                        COALESCE(SUM(CASE WHEN successful THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0), 0) as success_rate
-                    FROM chat_sessions
-                    WHERE start_time BETWEEN %s AND %s
-                    GROUP BY DATE(start_time)
-                ),
-                PerformanceMetrics AS (
-                    SELECT 
-                        DATE(timestamp) as date,
-                        COALESCE(AVG(EXTRACT(epoch FROM avg_response_time)), 0) as avg_response_time,
-                        COALESCE(cache_hit_rate, 0) as cache_hit_rate,
-                        COALESCE(error_rate, 0) as error_rate
-                    FROM search_performance
+                        DATE(timestamp) as timestamp,
+                        user_id,
+                        id
+                    FROM search_logs
                     WHERE timestamp BETWEEN %s AND %s
-                    GROUP BY DATE(timestamp), cache_hit_rate, error_rate
-                )
-                SELECT json_build_object(
-                    'activity_metrics', COALESCE((SELECT json_agg(row_to_json(UserActivityMetrics)) FROM UserActivityMetrics), '[]'::json),
-                    'sessions', COALESCE((SELECT json_agg(row_to_json(SessionMetrics)) FROM SessionMetrics), '[]'::json),
-                    'performance', COALESCE((SELECT json_agg(row_to_json(PerformanceMetrics)) FROM PerformanceMetrics), '[]'::json)
-                ) as metrics;
-            """, (start_date, end_date, start_date, end_date, start_date, end_date, start_date, end_date))
-            
-            query_time = time.time() - start_time
-            if query_time > 5:
-                logger.warning(f"Slow query detected: {query_time:.2f} seconds")
+                    GROUP BY DATE(timestamp), user_id, id
+                ) s ON DATE(c.created_at) = DATE(s.timestamp) AND c.user_id = s.user_id
+                GROUP BY DATE(COALESCE(c.created_at, s.timestamp))
+                ORDER BY DATE(COALESCE(c.created_at, s.timestamp))
+            ),
+            SessionMetrics AS (
+                SELECT 
+                    DATE(start_time) as date,
+                    COUNT(*) as total_sessions,
+                    COALESCE(
+                        AVG(
+                            CASE 
+                                WHEN end_time IS NOT NULL 
+                                THEN EXTRACT(epoch FROM (end_time - start_time))
+                                ELSE EXTRACT(epoch FROM (CURRENT_TIMESTAMP - start_time))
+                            END
+                        ), 
+                        0
+                    ) as avg_session_duration,
+                    COALESCE(AVG(total_messages), 0) as avg_messages_per_session,
+                    COALESCE(SUM(CASE WHEN successful THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0), 0) as success_rate
+                FROM chat_sessions
+                WHERE start_time BETWEEN %s AND %s
+                GROUP BY DATE(start_time)
+                ORDER BY DATE(start_time)
+            ),
+            PerformanceMetrics AS (
+                SELECT 
+                    DATE(s.timestamp) as date,
+                    COALESCE(AVG(EXTRACT(epoch FROM s.response_time::interval)), 0) as avg_response_time,
+                    COUNT(CASE WHEN s.clicked = true OR s.success_rate = 1 THEN 1 END)::float / 
+                        NULLIF(COUNT(*), 0) * 100 as success_rate,
+                    COUNT(CASE WHEN s.success_rate < 1 THEN 1 END)::float / 
+                        NULLIF(COUNT(*), 0) * 100 as error_rate,
+                    COUNT(*) as total_queries,
+                    COUNT(DISTINCT s.user_id) as unique_users
+                FROM search_logs s
+                WHERE s.timestamp BETWEEN %s AND %s
+                GROUP BY DATE(s.timestamp)
+                ORDER BY DATE(s.timestamp)
+            )
+            SELECT json_build_object(
+                'activity_metrics', COALESCE((SELECT json_agg(row_to_json(UserActivityMetrics)) FROM UserActivityMetrics), '[]'::json),
+                'sessions', COALESCE((SELECT json_agg(row_to_json(SessionMetrics)) FROM SessionMetrics), '[]'::json),
+                'performance', COALESCE((SELECT json_agg(row_to_json(PerformanceMetrics)) FROM PerformanceMetrics), '[]'::json)
+            ) as metrics;
+            """
+
+            cursor.execute(query, (
+                start_date, end_date,  # Chat interactions date range
+                start_date, end_date,  # Search logs date range
+                start_date, end_date,  # Chat sessions date range
+                start_date, end_date   # Search logs performance range
+            ))
             
             raw_result = cursor.fetchone()
-            logger.info(f"Query result: {raw_result}")
             
             if not raw_result or raw_result[0] is None:
                 logger.info("No data found for the specified date range")
                 return metrics_template
                 
             result = raw_result[0]
-            logger.info(f"Parsed result structure: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
             
             metrics = {}
             for key in ['activity_metrics', 'sessions', 'performance']:
@@ -136,7 +150,6 @@ def create_metric_chart(
     title: str,
     height: int = 400
 ) -> Optional[go.Figure]:
-    """Create a metric chart with error handling."""
     try:
         if data.empty or not all(col in data.columns for col in [x_col] + y_cols):
             return None
@@ -148,89 +161,136 @@ def create_metric_chart(
             title=title,
             labels={'value': 'Value', 'variable': 'Metric'}
         )
-        fig.update_layout(height=height)
+        fig.update_layout(
+            height=height,
+            xaxis_title="Date",
+            yaxis_title="Count",
+            legend_title="Metrics",
+            hovermode='x unified'
+        )
         return fig
     except Exception as e:
         logger.error(f"Error creating chart {title}: {str(e)}")
         return None
 
 def display_usage_analytics(filters: Dict[str, Any], metrics: Dict[str, pd.DataFrame]) -> None:
-    """Display usage analytics with enhanced error handling."""
     try:
-        st.subheader("Usage Analytics")
+        st.title("Usage Analytics Dashboard")
         
         activity_data = metrics.get('activity_metrics', pd.DataFrame())
         session_data = metrics.get('sessions', pd.DataFrame())
         perf_data = metrics.get('performance', pd.DataFrame())
         
-        if all(df.empty for df in [activity_data, session_data, perf_data]):
-            st.warning("No data available for the selected date range. Please adjust your filters and try again.")
-            return
-            
+        # Check if all expected DataFrames exist and have data
+        logger.info(f"Activity Data: {not activity_data.empty}")
+        logger.info(f"Session Data: {not session_data.empty}")
+        logger.info(f"Performance Data: {not perf_data.empty}")
+        
         # Overview metrics
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
+            total_interactions = activity_data['total_interactions'].sum() if not activity_data.empty else 0
+            st.metric("Total Interactions", f"{total_interactions:,}")
+        with col2:
+            chat_users = activity_data['chat_users'].sum() if not activity_data.empty else 0
+            st.metric("Chat Users", f"{chat_users:,}")
+        with col3:
+            search_users = activity_data['search_users'].sum() if not activity_data.empty else 0
+            st.metric("Search Users", f"{search_users:,}")
+        with col4:
             total_users = activity_data['total_users'].sum() if not activity_data.empty else 0
             st.metric("Total Users", f"{total_users:,}")
-        with col2:
-            total_sessions = session_data['total_sessions'].sum() if not session_data.empty else 0
-            st.metric("Total Sessions", f"{total_sessions:,}")
-        with col3:
-            avg_success = session_data['success_rate'].mean() if not session_data.empty else 0
-            st.metric("Average Success Rate", f"{avg_success:.1%}")
-        
-        # User Activity Trends
+
+        # Activity Metrics Section
         if not activity_data.empty:
-            fig = create_metric_chart(
+            st.header("User Activity")
+            
+            # Daily Active Users
+            fig = px.line(
                 activity_data,
-                'date',
-                ['chat_users', 'search_users'],
-                'Daily Active Users by Type'
+                x='date',
+                y=['chat_users', 'search_users', 'total_users'],
+                title='Daily Active Users'
             )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Session Analysis
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Daily Interactions
+            fig = px.line(
+                activity_data,
+                x='date',
+                y='total_interactions',
+                title='Daily Total Interactions'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Session Metrics Section
         if not session_data.empty:
+            st.header("Session Analytics")
             col1, col2 = st.columns(2)
+            
             with col1:
-                fig = create_metric_chart(
+                fig = px.line(
                     session_data,
-                    'date',
-                    ['avg_session_duration'],
-                    'Average Session Duration (seconds)',
-                    300
+                    x='date',
+                    y='avg_session_duration',
+                    title='Average Session Duration (seconds)'
                 )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = create_metric_chart(
+                fig = px.line(
                     session_data,
-                    'date',
-                    ['avg_messages_per_session'],
-                    'Average Messages per Session',
-                    300
+                    x='date',
+                    y='avg_messages_per_session',
+                    title='Average Messages per Session'
                 )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-        
-        # Performance Metrics
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Performance Metrics Section
         if not perf_data.empty:
-            st.subheader("System Performance")
-            fig = create_metric_chart(
-                perf_data,
-                'date',
-                ['avg_response_time', 'error_rate'],
-                'System Performance Over Time'
-            )
-            if fig:
+            st.header("System Performance")
+            
+            # Response Time
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.line(
+                    perf_data,
+                    x='date',
+                    y='avg_response_time',
+                    title='Average Response Time (seconds)'
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
+            with col2:
+                fig = px.line(
+                    perf_data,
+                    x='date',
+                    y=['success_rate', 'error_rate'],
+                    title='Success and Error Rates (%)'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Query Metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.line(
+                    perf_data,
+                    x='date',
+                    y='total_queries',
+                    title='Total Queries'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                fig = px.line(
+                    perf_data,
+                    x='date',
+                    y='unique_users',
+                    title='Unique Users'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
     except Exception as e:
         logger.error(f"Error displaying analytics: {str(e)}")
+        logger.error(traceback.format_exc())
         st.error("An error occurred while displaying the analytics. Please try again later.")
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    st.set_page_config(page_title="Usage Analytics Dashboard", layout="wide")

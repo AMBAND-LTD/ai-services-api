@@ -8,7 +8,7 @@ from components.sidebar import create_sidebar_filters
 from utils.db_utils import DatabaseConnector
 from utils.logger import setup_logger
 from utils.theme import toggle_theme, apply_theme, update_plot_theme
-from datetime import datetime
+from datetime import datetime, date
 import logging
 import streamlit as st
 class UnifiedAnalyticsDashboard:
@@ -80,6 +80,12 @@ class UnifiedAnalyticsDashboard:
 
     def display_analytics(self, analytics_type, start_date, end_date, filters):
         """Display analytics based on selected type and filters."""
+        # Ensure start_date and end_date are datetime objects
+        if isinstance(start_date, date):
+            start_date = datetime.combine(start_date, datetime.min.time())
+        if isinstance(end_date, date):
+            end_date = datetime.combine(end_date, datetime.max.time())
+
         # Display overall metrics for context
         self.display_overall_metrics(start_date, end_date)
         
@@ -96,23 +102,28 @@ class UnifiedAnalyticsDashboard:
         if analytics_type in analytics_map:
             get_metrics, display_analytics = analytics_map[analytics_type]
             
-            # Get metrics with appropriate filters
-            if analytics_type == "Expert":
-                metrics = get_metrics(
-                    self.conn, 
-                    start_date, 
-                    end_date, 
-                    filters.get('expert_count', 20)
-                )
-            else:
-                metrics = get_metrics(self.conn, start_date, end_date)
+            try:
+                # Get metrics with appropriate filters
+                if analytics_type == "Expert":
+                    metrics = get_metrics(
+                        self.conn, 
+                        start_date, 
+                        end_date, 
+                        filters.get('expert_count', 20)
+                    )
+                else:
+                    metrics = get_metrics(self.conn, start_date, end_date)
+                
+                # Display analytics with filters applied
+                display_analytics(metrics, filters)
+                
+                # Handle export if enabled
+                if 'export_format' in filters:
+                    self.export_analytics(metrics, analytics_type, filters['export_format'])
             
-            # Display analytics with filters applied
-            display_analytics(metrics, filters)
-            
-            # Handle export if enabled
-            if 'export_format' in filters:
-                self.export_analytics(metrics, analytics_type, filters['export_format'])
+            except Exception as e:
+                self.logger.error(f"Error in display_analytics for {analytics_type}: {str(e)}")
+                st.error(f"An error occurred while processing {analytics_type} analytics.")
 
     def display_overall_metrics(self, start_date, end_date):
         """Display overall platform metrics."""

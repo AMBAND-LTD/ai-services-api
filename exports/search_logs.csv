@@ -1,0 +1,2 @@
+id,query,user_id,timestamp,response_time,result_count,clicked,search_type,success_rate,page_number,search_count,filters
+1,research,1,2025-01-12 09:45:06.652178,00:00:02.659961,5,f,expert_search,1,1,1,

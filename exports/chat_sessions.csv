@@ -1,0 +1,2 @@
+id,session_id,user_id,start_time,end_time,total_messages,successful,created_at,updated_at
+1,session_1736675115,1,2025-01-12 09:45:15.872404+00,,1,t,2025-01-12 09:45:15.872404+00,2025-01-12 09:45:31.574664+00
