@@ -1,7 +1,0 @@
-version: "2"
-authtoken: "2mcb1MFE6r7cKVvuGKDKhRaZT37_2nzuGDuwajvaLx3JSFYkG"
-tunnels:
-  api:
-    proto: http
-    addr: 8000
-    inspect: false

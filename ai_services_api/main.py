@@ -41,7 +41,7 @@ async def read_index():
 
 @app.get("/chatbot", response_class=HTMLResponse)
 async def read_chatbot():
-    with open("ai_services_api/services/chatbot/templates/index.html") as f:
+    with open("ai_services_api/templates/chatbot.html") as f:
         return f.read()
 
 @app.get("/recommendation", response_class=HTMLResponse)
