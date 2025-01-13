@@ -128,23 +128,22 @@ async def process_query_prediction(
     """Common query prediction processing logic"""
     db = DatabaseManager()
     try:
-        # Record prediction attempt
-        cursor = db.get_cursor()
-        cursor.execute("""
-            INSERT INTO query_predictions
-            (partial_query, user_id, timestamp)
-            VALUES (%s, %s, NOW())
-            RETURNING id
-        """, (partial_query, user_id))
-        
+        # Get predictions from ML model first
         predictions = ml_predictor.predict(partial_query, user_id=user_id)
-        scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
+        confidence_scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
         
-        db.commit()
+        # Record each prediction with its confidence score
+        for predicted_query, confidence in zip(predictions, confidence_scores):
+            db.record_query_prediction(
+                partial_query=partial_query,
+                predicted_query=predicted_query,  # This was missing before
+                confidence_score=confidence,
+                user_id=user_id
+            )
         
         return PredictionResponse(
             predictions=predictions,
-            confidence_scores=scores,
+            confidence_scores=confidence_scores,
             user_id=user_id
         )
         
@@ -153,7 +152,6 @@ async def process_query_prediction(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
-
 # Test endpoints
 @router.get("/test/experts/search/{query}")
 async def test_search_experts(

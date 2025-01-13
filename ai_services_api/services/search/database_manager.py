@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
 from ai_services_api.services.data.database_setup import get_db_connection
+from psycopg2.extras import DictCursor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,17 +14,24 @@ logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self):
-        """Initialize database connection and cursor."""
+        """Initialize database connection."""
         self.conn = get_db_connection()
-        self.cur = self.conn.cursor()
+        self._cursor = None
+
+    def get_cursor(self):
+        """Get a database cursor with DictCursor factory."""
+        if not self._cursor or self._cursor.closed:
+            self._cursor = self.conn.cursor(cursor_factory=DictCursor)
+        return self._cursor
 
     def execute(self, query: str, params: tuple = None) -> List[Tuple[Any, ...]]:
         """Execute a query and return results if any."""
+        cursor = self.get_cursor()
         try:
-            self.cur.execute(query, params)
+            cursor.execute(query, params)
             self.conn.commit()
-            if self.cur.description:  # If the query returns results
-                return self.cur.fetchall()
+            if cursor.description:  # If the query returns results
+                return cursor.fetchall()
             return []
         except Exception as e:
             self.conn.rollback()
@@ -41,7 +49,8 @@ class DatabaseManager:
             # Convert empty strings to None
             orcid = orcid if orcid and orcid.strip() else None
             
-            self.cur.execute("""
+            cursor = self.get_cursor()
+            cursor.execute("""
                 INSERT INTO experts_expert 
                 (first_name, last_name, knowledge_expertise, domains, fields, subfields, orcid)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -62,7 +71,7 @@ class DatabaseManager:
                   subfields or [], 
                   orcid))
             
-            expert_id = self.cur.fetchone()[0]
+            expert_id = cursor.fetchone()[0]
             self.conn.commit()
             logger.info(f"Added/updated expert data for {first_name} {last_name}")
             return expert_id
@@ -293,18 +302,8 @@ class DatabaseManager:
     def record_search_analytics(self, query: str, user_id: str, response_time: float, 
                               result_count: int, search_type: str = 'general', 
                               filters: dict = None) -> int:
-        """Record search analytics and return search_id.
-        
-        Args:
-            query: The search query string
-            user_id: ID of the user making the search
-            response_time: Response time in seconds (will be converted to interval)
-            result_count: Number of results returned
-            search_type: Type of search performed
-            filters: Any filters applied to the search
-        """
+        """Record search analytics and return search_id."""
         try:
-            # Convert seconds to interval string 'X seconds'
             interval_str = f"{response_time} seconds"
             
             result = self.execute("""
@@ -316,7 +315,7 @@ class DatabaseManager:
             """, (
                 query, 
                 user_id,
-                interval_str,  # This will be cast to interval by Postgres
+                interval_str,
                 result_count,
                 search_type,
                 1.0 if result_count > 0 else 0.0,
@@ -347,8 +346,8 @@ class DatabaseManager:
         try:
             self.execute("""
                 INSERT INTO query_predictions 
-                (partial_query, predicted_query, confidence_score, user_id)
-                VALUES (%s, %s, %s, %s)
+                (partial_query, predicted_query, confidence_score, user_id, timestamp)
+                VALUES (%s, %s, %s, %s, NOW())
             """, (partial_query, predicted_query, confidence_score, user_id))
         except Exception as e:
             logger.error(f"Error recording query prediction: {e}")
@@ -492,10 +491,11 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting performance metrics: {e}")
             raise
+
     def close(self):
-        """Close database connection."""
-        if hasattr(self, 'cur') and self.cur:
-            self.cur.close()
+        """Close database connection and cursor."""
+        if hasattr(self, '_cursor') and self._cursor:
+            self._cursor.close()
         if hasattr(self, 'conn') and self.conn:
             self.conn.close()
             logger.info("Database connection closed")
