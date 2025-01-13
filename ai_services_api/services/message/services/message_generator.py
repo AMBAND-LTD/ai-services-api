@@ -1,4 +1,4 @@
-from ai_services_api.services.message.gemini_client import GeminiClient
+from ai_services_api.services.message.clients.gemini_client import GeminiClient
 from ai_services_api.services.message.schemas.expert import ExpertResponse
 from typing import Optional
 

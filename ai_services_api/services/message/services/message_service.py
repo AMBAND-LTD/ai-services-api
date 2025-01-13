@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from ai_services_api.services.message.models.message import Message
 from ai_services_api.services.message.models.expert import Expert
 from ai_services_api.services.message.schemas.message import MessageCreate, MessageUpdate
-from ai_services_api.services.message.message_generator import MessageGenerator
+from ai_services_api.services.message.services.message_generator import MessageGenerator
 from typing import List, Optional
 
 class MessageService:

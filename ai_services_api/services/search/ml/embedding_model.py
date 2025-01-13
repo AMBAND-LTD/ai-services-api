@@ -3,7 +3,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import Optional
 import hashlib
-from ai_services_api.services.search.cache_manager import CacheManager  # Add this import
+from ai_services_api.services.search.core.cache_manager import CacheManager  # Add this import
 
 logging.basicConfig(
     level=logging.INFO,

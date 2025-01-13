@@ -76,20 +76,21 @@ class OpenAlexProcessor:
             raise
 
     async def load_initial_experts(self, expertise_csv: str):
-        """Load initial expert data from CSV."""
+        """Load initial expert data from CSV, skipping existing experts."""
         try:
             if not os.path.exists(expertise_csv):
                 raise FileNotFoundError(f"CSV file not found: {expertise_csv}")
-
+            
             logger.info(f"Loading experts from {expertise_csv}")
             
             conn = get_db_connection()
             cur = conn.cursor()
 
+            # Check column type for knowledge_expertise
             cur.execute("""
                 SELECT column_name, data_type 
                 FROM information_schema.columns 
-                WHERE table_name = 'experts_expert' 
+                WHERE table_name = 'experts_expert'
                 AND column_name = 'knowledge_expertise';
             """)
             column_types = dict(cur.fetchall())
@@ -99,16 +100,27 @@ class OpenAlexProcessor:
                 try:
                     first_name = row['First_name']
                     last_name = row['Last_name']
+                    
+                    # Check if expert already exists
+                    cur.execute("""
+                        SELECT id FROM experts_expert 
+                        WHERE first_name = %s AND last_name = %s
+                    """, (first_name, last_name))
+                    
+                    if cur.fetchone() is not None:
+                        logger.info(f"Expert already exists: {first_name} {last_name} - skipping")
+                        continue
+
                     expertise_str = row['Knowledge and Expertise']
                     expertise_list = []
                     if not pd.isna(expertise_str):
                         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
-
+                    
                     cur.execute("""
-                    INSERT INTO experts_expert (
-                        first_name, last_name, designation, theme, unit, 
-                        contact_details, knowledge_expertise
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO experts_expert (
+                            first_name, last_name, designation, theme, unit,
+                            contact_details, knowledge_expertise
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         first_name, last_name, row['Designation'],
                         row['Theme'], row['Unit'], row['Contact Details'],
@@ -116,11 +128,11 @@ class OpenAlexProcessor:
                     ))
                     conn.commit()
                     logger.info(f"Added expert: {first_name} {last_name}")
-
+                    
                 except Exception as e:
                     conn.rollback()
                     logger.error(f"Error processing row: {e}")
-
+                    
         except Exception as e:
             logger.error(f"Error loading experts: {e}")
             raise

@@ -1,8 +1,8 @@
 # app/api/endpoints/messages.py
 from fastapi import APIRouter, HTTPException, Request, Depends
 from typing import List, Optional
-from ai_services_api.services.message.database import get_db_connection
-from ai_services_api.services.message.config import get_settings
+from ai_services_api.services.message.core.database import get_db_connection
+from ai_services_api.services.message.core.config import get_settings
 import google.generativeai as genai
 from datetime import datetime
 import logging

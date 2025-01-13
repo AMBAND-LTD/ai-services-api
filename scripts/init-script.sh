@@ -100,7 +100,7 @@ initialize_app() {
     # Only create search index if not skipped
     if [ "${SKIP_SEARCH:-false}" != "true" ]; then
         echo "[$(date)] Creating search index..."
-        if ! python -m ai_services_api.services.search.index_creator; then
+        if ! python -m ai_services_api.services.search.search.index_creator; then
             echo "[$(date)] Search index creation failed"
             return 1
         fi
@@ -109,7 +109,7 @@ initialize_app() {
     # Only create Redis embeddings if not skipped
     if [ "${SKIP_REDIS:-false}" != "true" ]; then
         echo "[$(date)] Creating Redis embeddings..."
-        if ! python -m ai_services_api.services.search.redis_embeddings; then
+        if ! python -m ai_services_api.services.search.db.redis.redis_embeddings; then
             echo "[$(date)] Redis embeddings creation failed"
             return 1
         fi

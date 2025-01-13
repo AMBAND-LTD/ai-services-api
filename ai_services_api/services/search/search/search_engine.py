@@ -10,10 +10,10 @@ from typing import List, Dict, Optional, Any, Union
 from datetime import datetime, timedelta
 
 # database and analytics
-from ai_services_api.services.search.database_manager import DatabaseManager
-from ai_services_api.services.search.cache_manager import CacheManager
-from ai_services_api.services.search.embedding_model import EmbeddingModel
-from ai_services_api.services.search.ml_predictor import MLPredictor
+from ai_services_api.services.search.db.database_manager import DatabaseManager
+from ai_services_api.services.search.core.cache_manager import CacheManager
+from ai_services_api.services.search.ml.embedding_model import EmbeddingModel
+from ai_services_api.services.search.ml.ml_predictor import MLPredictor
 
 class SearchEngine:
     def __init__(self):

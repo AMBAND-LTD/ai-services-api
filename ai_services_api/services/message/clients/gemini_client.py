@@ -1,5 +1,5 @@
 import google.generativeai as genai
-from ai_services_api.services.message.config import get_settings
+from ai_services_api.services.message.core.config import get_settings
 import asyncio
 from typing import Optional, Dict, Any
 

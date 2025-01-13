@@ -1,6 +1,6 @@
 
 from fastapi import APIRouter
-from ai_services_api.services.message import message
+from ai_services_api.services.message.app.endpoints import message
 
 api_router = APIRouter()
 
