@@ -5,23 +5,23 @@ import argparse
 import asyncio
 from dotenv import load_dotenv
 
-from ai_services_api.services.data.database_setup import (
+from ai_services_api.services.centralized_repository.database_setup import (
     create_database_if_not_exists,
     create_tables,
     fix_experts_table,
     get_db_connection
 )
 
-from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor 
-from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
-from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
+from ai_services_api.services.centralized_repository.openalex.openalex_processor import OpenAlexProcessor 
+from ai_services_api.services.centralized_repository.publication_processor import PublicationProcessor
+from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
 from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
 from ai_services_api.services.search.redis_index_manager import ExpertRedisIndexManager
-from ai_services_api.services.data.openalex.orcid_processor import OrcidProcessor
-from ai_services_api.services.data.openalex.knowhub_scraper import KnowhubScraper
-from ai_services_api.services.data.openalex.website_scraper import WebsiteScraper
-from ai_services_api.services.data.openalex.researchnexus_scraper import ResearchNexusScraper
+from ai_services_api.services.centralized_repository.orcid.orcid_processor import OrcidProcessor
+from ai_services_api.services.centralized_repository.knowhub.knowhub_scraper import KnowhubScraper
+from ai_services_api.services.centralized_repository.website.website_scraper import WebsiteScraper
+from ai_services_api.services.centralized_repository.nexus.researchnexus_scraper import ResearchNexusScraper
 
 logging.basicConfig(
     level=logging.INFO,

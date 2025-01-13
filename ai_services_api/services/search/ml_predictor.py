@@ -2,7 +2,7 @@ import logging
 from typing import List, Dict, Optional, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
-from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 
 logger = logging.getLogger(__name__)
 

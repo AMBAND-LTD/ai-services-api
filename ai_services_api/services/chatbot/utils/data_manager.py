@@ -17,7 +17,7 @@ import requests
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
-from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

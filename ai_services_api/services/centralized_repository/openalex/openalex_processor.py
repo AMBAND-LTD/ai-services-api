@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import json
 from ai_services_api.services.centralized_repository.database_manager import DatabaseManager
 from ai_services_api.services.centralized_repository.publication_processor import PublicationProcessor
-from ai_services_api.services.data.centralized_repository.ai_summarizer import TextSummarizer
+from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
 import requests
 from ai_services_api.services.centralized_repository.openalex.expert_processor import ExpertProcessor
 

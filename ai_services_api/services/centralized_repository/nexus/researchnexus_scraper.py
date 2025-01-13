@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
-from ai_services_api.services.datacentralized_repository.text_processor import safe_str
+from ai_services_api.services.centralized_repository.text_processor import safe_str
 
 logging.basicConfig(
     level=logging.INFO,

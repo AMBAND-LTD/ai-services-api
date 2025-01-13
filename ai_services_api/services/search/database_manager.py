@@ -2,7 +2,7 @@ import os
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
-from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 from psycopg2.extras import DictCursor
 
 logging.basicConfig(

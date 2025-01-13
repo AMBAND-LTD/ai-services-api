@@ -4,7 +4,7 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any, Optional
 import redis
 from dotenv import load_dotenv
-from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 import os
 import time
 import json

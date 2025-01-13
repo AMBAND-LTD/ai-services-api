@@ -11,7 +11,7 @@ from time import sleep
 from urllib.parse import urljoin
 
 from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
-from ai_services_api.services.datacentralized_repository.text_processor import safe_str, truncate_text
+from ai_services_api.services.centralized_repository.text_processor import safe_str, truncate_text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

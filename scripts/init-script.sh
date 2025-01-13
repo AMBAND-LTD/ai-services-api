@@ -35,7 +35,7 @@ check_service() {
 verify_database() {
     echo "[$(date)] Verifying database tables..."
     if ! python -c "
-from ai_services_api.services.data.database_setup import get_db_connection
+from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 conn = get_db_connection()
 cur = conn.cursor()
 try:
