@@ -389,7 +389,7 @@ def create_tables():
             # Dependent table: expert_messages
             """
             CREATE TABLE IF NOT EXISTS expert_messages (
-                expert_id SERIAL PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 sender_id INTEGER REFERENCES experts_expert(id),
                 receiver_id INTEGER REFERENCES experts_expert(id),
                 content TEXT,
