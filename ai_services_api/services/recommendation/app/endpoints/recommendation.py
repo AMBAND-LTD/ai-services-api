@@ -41,24 +41,16 @@ async def get_test_user_id(request: Request) -> str:
         user_id = "test_user_123"
     return user_id
 
-async def process_expert_recommendation(
+async def record_recommendation_analytics(
+    cursor,
     expert_id: str,
+    similar_experts: List[Dict[str, Any]],
     user_id: str
 ):
-    """Common expert recommendation processing logic"""
-    db_conn = get_db_connection()
-    cursor = db_conn.cursor()
-    start_time = datetime.utcnow()
-    
+    """Record recommendation analytics"""
     try:
-        # Get expert matching service
-        expert_matching = ExpertMatchingService()
-        
-        # Get recommendations with analytics tracking
-        similar_experts = await expert_matching.find_similar_experts(expert_id)
-        
-        # Record matches in analytics
         for match in similar_experts:
+            # Record match analytics
             cursor.execute("""
                 INSERT INTO expert_matching_logs (
                     expert_id,
@@ -67,16 +59,18 @@ async def process_expert_recommendation(
                     shared_domains,
                     shared_fields,
                     shared_skills,
-                    successful
-                ) VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                    successful,
+                    user_id
+                ) VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
             """, (
                 expert_id,
                 match['id'],
                 match['similarity_score'],
-                json.dumps(match['shared_domains']),
+                json.dumps(match.get('shared_domains', [])),
                 len(match.get('shared_fields', [])),
                 len(match.get('shared_skills', [])),
-                True  # All matches are considered successful as we're taking top 10
+                True,
+                user_id
             ))
             
             # Record domain analytics
@@ -84,18 +78,72 @@ async def process_expert_recommendation(
                 cursor.execute("""
                     INSERT INTO domain_expertise_analytics (
                         domain_name,
-                        match_count
-                    ) VALUES (%s, 1)
+                        match_count,
+                        last_matched_at
+                    ) VALUES (%s, 1, CURRENT_TIMESTAMP)
                     ON CONFLICT (domain_name) 
-                    DO UPDATE SET match_count = domain_expertise_analytics.match_count + 1
+                    DO UPDATE SET 
+                        match_count = domain_expertise_analytics.match_count + 1,
+                        last_matched_at = CURRENT_TIMESTAMP
                 """, (domain,))
+
+            # Record interaction in expert_interactions
+            cursor.execute("""
+                INSERT INTO expert_interactions (
+                    sender_id,
+                    receiver_id,
+                    interaction_type,
+                    success,
+                    metadata,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, CURRENT_TIMESTAMP)
+            """, (
+                expert_id,
+                match['id'],
+                'recommendation_shown',
+                True,
+                json.dumps({
+                    'similarity_score': match['similarity_score'],
+                    'shared_domains': match.get('shared_domains', []),
+                    'shared_fields': match.get('shared_fields', []),
+                    'source': 'expert_recommendation'
+                })
+            ))
+
+    except Exception as e:
+        logger.error(f"Error recording analytics: {e}")
+        raise
+
+async def process_expert_recommendation(
+    expert_id: str,
+    user_id: str,
+    is_test: bool = False
+):
+    """Common expert recommendation processing logic"""
+    expert_matching = None
+    db_conn = None
+    cursor = None
+    
+    try:
+        # Initialize services
+        expert_matching = ExpertMatchingService()
+        db_conn = get_db_connection()
+        cursor = db_conn.cursor()
         
+        # Get recommendations
+        similar_experts = await expert_matching.find_similar_experts(expert_id)
+        
+        # Record analytics if not test
+        if not is_test:
+            await record_recommendation_analytics(cursor, expert_id, similar_experts, user_id)
+        
+        # Commit transaction
         db_conn.commit()
         
         return {
             "expert_id": expert_id,
             "recommendations": similar_experts,
-            "user_id": user_id,  # Include user_id in response but not in DB
+            "user_id": user_id,
             "analytics": {
                 "total_matches": len(similar_experts),
                 "average_similarity": sum(e['similarity_score'] for e in similar_experts) / len(similar_experts) if similar_experts else 0,
@@ -104,12 +152,17 @@ async def process_expert_recommendation(
         }
         
     except Exception as e:
-        db_conn.rollback()
-        logger.error(f"Error in recommendation: {e}")
+        if db_conn:
+            db_conn.rollback()
+        logger.error(f"Error in recommendation process: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        cursor.close()
-        db_conn.close()
+        if cursor:
+            cursor.close()
+        if db_conn:
+            db_conn.close()
+        if expert_matching:
+            expert_matching.close()
 
 # Test endpoint
 @router.post("/recommendation/test/recommend/{expert_id}")
@@ -120,7 +173,7 @@ async def test_expert_recommendation(
     user_id: str = Depends(get_test_user_id)
 ):
     """Test endpoint for expert recommendations with analytics tracking."""
-    return await process_expert_recommendation(expert_id, user_id)
+    return await process_expert_recommendation(expert_id, user_id, is_test=True)
 
 # Production endpoint
 @router.post("/recommendation/recommend/{expert_id}")
@@ -131,4 +184,4 @@ async def expert_recommendation(
     user_id: str = Depends(get_user_id)
 ):
     """Production endpoint for expert recommendations with analytics tracking."""
-    return await process_expert_recommendation(expert_id, user_id)
+    return await process_expert_recommendation(expert_id, user_id, is_test=False)

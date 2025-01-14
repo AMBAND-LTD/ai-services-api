@@ -4,11 +4,12 @@ from analytics.expert_analytics import get_expert_metrics, display_expert_analyt
 from analytics.overview_analytics import get_overview_metrics, display_overview_analytics
 from analytics.content_analytics import get_content_metrics, display_content_analytics
 from analytics.usage_analytics import get_usage_metrics, display_usage_analytics
+from analytics.adaptive_analytics import get_adaptive_metrics, display_adaptive_analytics
 from components.sidebar import create_sidebar_filters
 from utils.db_utils import DatabaseConnector
 from utils.logger import setup_logger
 from utils.theme import toggle_theme, apply_theme, update_plot_theme
-from datetime import datetime, date
+from datetime import datetime
 import logging
 import streamlit as st
 class UnifiedAnalyticsDashboard:
@@ -80,12 +81,6 @@ class UnifiedAnalyticsDashboard:
 
     def display_analytics(self, analytics_type, start_date, end_date, filters):
         """Display analytics based on selected type and filters."""
-        # Ensure start_date and end_date are datetime objects
-        if isinstance(start_date, date):
-            start_date = datetime.combine(start_date, datetime.min.time())
-        if isinstance(end_date, date):
-            end_date = datetime.combine(end_date, datetime.max.time())
-
         # Display overall metrics for context
         self.display_overall_metrics(start_date, end_date)
         
@@ -96,74 +91,85 @@ class UnifiedAnalyticsDashboard:
             "Search": (get_search_metrics, display_search_analytics),
             "Expert": (get_expert_metrics, display_expert_analytics),
             "Content": (get_content_metrics, display_content_analytics),
-            "Usage": (get_usage_metrics, display_usage_analytics)
+            "Usage": (get_usage_metrics, display_usage_analytics),
+            "Adaptive": (get_adaptive_metrics, display_adaptive_analytics)  # Add this line
+
         }
         
         if analytics_type in analytics_map:
             get_metrics, display_analytics = analytics_map[analytics_type]
             
-            try:
-                # Get metrics with appropriate filters
-                if analytics_type == "Expert":
-                    metrics = get_metrics(
-                        self.conn, 
-                        start_date, 
-                        end_date, 
-                        filters.get('expert_count', 20)
-                    )
-                else:
-                    metrics = get_metrics(self.conn, start_date, end_date)
-                
-                # Display analytics with filters applied
-                display_analytics(metrics, filters)
-                
-                # Handle export if enabled
-                if 'export_format' in filters:
-                    self.export_analytics(metrics, analytics_type, filters['export_format'])
+            # Get metrics with appropriate filters
+            if analytics_type == "Expert":
+                metrics = get_metrics(
+                    self.conn, 
+                    start_date, 
+                    end_date, 
+                    filters.get('expert_count', 20)
+                )
+            else:
+                metrics = get_metrics(self.conn, start_date, end_date)
             
-            except Exception as e:
-                self.logger.error(f"Error in display_analytics for {analytics_type}: {str(e)}")
-                st.error(f"An error occurred while processing {analytics_type} analytics.")
+            # Display analytics with filters applied
+            display_analytics(metrics, filters)
+            
+            # Handle export if enabled
+            if 'export_format' in filters:
+                self.export_analytics(metrics, analytics_type, filters['export_format'])
 
     def display_overall_metrics(self, start_date, end_date):
-        """Display overall platform metrics."""
-        col1, col2, col3, col4 = st.columns(4)
-        
+        col1, col2, col3, col4, col5 = st.columns(5)  # 5 columns
+    
         cursor = self.conn.cursor()
         try:
             cursor.execute("""
                 SELECT 
-                    (SELECT COUNT(*) FROM chat_interactions 
-                    WHERE timestamp BETWEEN %s AND %s) as total_chat_interactions,
-                    (SELECT COUNT(*) FROM search_logs 
-                    WHERE timestamp BETWEEN %s AND %s) as total_searches,
-                    (SELECT COUNT(DISTINCT user_id) FROM (
+                    COALESCE((SELECT COUNT(*) FROM chat_interactions 
+                    WHERE timestamp BETWEEN %s AND %s), 0) as total_chat_interactions,
+                    COALESCE((SELECT COUNT(*) FROM search_logs 
+                    WHERE timestamp BETWEEN %s AND %s), 0) as total_searches,
+                    COALESCE((SELECT COUNT(DISTINCT user_id) FROM (
                         SELECT user_id FROM chat_interactions 
                         WHERE timestamp BETWEEN %s AND %s
                         UNION
                         SELECT user_id FROM search_logs 
                         WHERE timestamp BETWEEN %s AND %s
-                    ) u) as unique_users,
-                    (SELECT COUNT(*) FROM chat_analytics 
-                    WHERE clicked = true) +
-                    (SELECT COUNT(*) FROM expert_searches 
-                    WHERE clicked = true) as total_expert_clicks
-            """, (start_date, end_date) * 4)
-            
+                    ) u), 0) as unique_users,
+                    COALESCE((SELECT COUNT(*) FROM expert_searches 
+                    WHERE clicked = true), 0) as total_expert_clicks,
+                    COALESCE((SELECT AVG(CASE WHEN success = true THEN 1.0 ELSE 0.0 END) 
+                    FROM expert_interactions
+                    WHERE created_at BETWEEN %s AND %s), 0.0) as adaptive_success_rate
+                """, (start_date, end_date) * 5)
+                
             metrics = cursor.fetchone()
             
+            # Defensive formatting with default values
+            def safe_format_metric(value, is_percentage=False):
+                try:
+                    if value is None:
+                        return "0"
+                    return f"{value:,.2%}" if is_percentage else f"{value:,}"
+                except Exception as e:
+                    self.logger.error(f"Metric formatting error: {e}")
+                    return "N/A"
+            
             with col1:
-                st.metric("Total Interactions", f"{metrics[0] + metrics[1]:,}")
+                st.metric("Total Interactions", safe_format_metric(metrics[0] + metrics[1]))
             with col2:
-                st.metric("Chat Interactions", f"{metrics[0]:,}")
+                st.metric("Chat Interactions", safe_format_metric(metrics[0]))
             with col3:
-                st.metric("Unique Users", f"{metrics[2]:,}")
+                st.metric("Unique Users", safe_format_metric(metrics[2]))
             with col4:
-                st.metric("Expert Clicks", f"{metrics[3]:,}")
-                
+                st.metric("Expert Clicks", safe_format_metric(metrics[3]))
+            with col5:
+                st.metric("Adaptive Success Rate", safe_format_metric(metrics[4], is_percentage=True))
+                    
+        except Exception as e:
+            self.logger.error(f"Error in overall metrics: {str(e)}")
+            st.error("Could not retrieve overall metrics")
         finally:
             cursor.close()
-
     def export_analytics(self, metrics, analytics_type, export_format):
         """Export analytics data in the specified format."""
         try:

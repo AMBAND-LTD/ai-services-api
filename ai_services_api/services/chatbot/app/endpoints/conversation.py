@@ -65,7 +65,7 @@ async def process_chat_request(
     user_id: str,
     background_tasks: BackgroundTasks
 ) -> ChatResponse:
-    """Common chat processing logic for both endpoints"""
+    """Common chat processing logic with sentiment analysis"""
     db_conn = db_connector.get_connection()
     cursor = db_conn.cursor()
     start_time = datetime.utcnow()
@@ -73,6 +73,9 @@ async def process_chat_request(
     try:
         # Create a new session
         session_id = await message_handler.start_chat_session(user_id)
+        
+        # Get sentiment analysis
+        sentiment_data = await llm_manager.analyze_sentiment(query)
         
         # Process message and collect response
         response_parts = []
@@ -94,30 +97,38 @@ async def process_chat_request(
         
         # Record interaction and update session
         if response_metadata:
+            # Add sentiment data to metadata
+            response_metadata['sentiment'] = sentiment_data
+            
             interaction_id = await message_handler.record_interaction(
                 session_id=session_id,
                 user_id=user_id,
                 query=query,
                 response_data={
                     'response': complete_response,
+                    'metrics': {
+                        'sentiment_score': sentiment_data['sentiment_score'],
+                        'aspects': sentiment_data['aspects'],
+                        'emotion_labels': sentiment_data['emotion_labels'],
+                        **response_metadata.get('metrics', {})
+                    },
                     **response_metadata
                 }
             )
             
+            # Update session with sentiment info
             await message_handler.update_session_stats(
                 session_id=session_id,
-                successful=not response_metadata.get('error_occurred', False)
+                successful=not response_metadata.get('error_occurred', False),
+                sentiment_score=sentiment_data['sentiment_score']
             )
             
             # Prepare metrics for response
             metrics = {
                 'response_time': response_metadata.get('metrics', {}).get('response_time', 0.0),
                 'intent': response_metadata.get('metrics', {}).get('intent', {}),
-                'content_matches': {
-                    'navigation': response_metadata.get('metrics', {}).get('content_types', {}).get('navigation', 0),
-                    'publication': response_metadata.get('metrics', {}).get('content_types', {}).get('publication', 0)
-                },
-                'error_occurred': response_metadata.get('error_occurred', False)
+                'content_matches': response_metadata.get('metrics', {}).get('content_matches', {}),
+                'sentiment': sentiment_data
             }
         else:
             metrics = None
@@ -132,7 +143,6 @@ async def process_chat_request(
         
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
-        # Record error if we have a session
         if 'session_id' in locals():
             await message_handler.record_interaction(
                 session_id=session_id,
@@ -140,17 +150,21 @@ async def process_chat_request(
                 query=query,
                 response_data={
                     'response': str(e),
-                    'intent_type': None,
-                    'intent_confidence': 0.0,
-                    'navigation_matches': 0,
-                    'publication_matches': 0,
-                    'response_time': (datetime.utcnow() - start_time).total_seconds(),
-                    'error_occurred': True
+                    'metrics': {
+                        'sentiment_score': 0.0,
+                        'aspects': {
+                            'satisfaction': 0.0,
+                            'urgency': 0.0,
+                            'clarity': 0.0
+                        },
+                        'error_occurred': True
+                    }
                 }
             )
             await message_handler.update_session_stats(
                 session_id=session_id,
-                successful=False
+                successful=False,
+                sentiment_score=0.0
             )
         raise HTTPException(status_code=500, detail=str(e))
     finally:

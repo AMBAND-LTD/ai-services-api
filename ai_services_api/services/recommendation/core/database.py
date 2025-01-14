@@ -13,12 +13,20 @@ model = genai.GenerativeModel('gemini-pro')
 
 class Neo4jDatabase:
     def __init__(self):
+        """Initialize Neo4j connection with environment variables"""
         self._driver = GraphDatabase.driver(
-            os.getenv('NEO4J_URI'),
-            auth=(os.getenv('NEO4J_USER'), os.getenv('NEO4J_PASSWORD'))
+            os.getenv('NEO4J_URI', 'neo4j://neo4j:7687'),
+            auth=(
+                os.getenv('NEO4J_USER', 'neo4j'),
+                os.getenv('NEO4J_PASSWORD', 'testneo4j')
+            )
         )
         self._logger = logging.getLogger(__name__)
         self._create_indexes()
+
+    def session(self):
+        """Get a Neo4j session - Added for direct session access"""
+        return self._driver.session()
 
     @contextmanager
     def _get_session(self):
@@ -52,11 +60,91 @@ class Neo4jDatabase:
                 except Exception as e:
                     self._logger.warning(f"Error creating index: {e}")
 
+    def query_graph(self, query: str, parameters: Dict = None) -> List[Dict[str, Any]]:
+        """Execute a Neo4j query and return results"""
+        with self._get_session() as session:
+            result = session.run(query, parameters or {})
+            return [record.data() for record in result]
+
+    def create_expert_node(self, orcid: str, name: str, metadata: Dict = None):
+        """Create or update expert node"""
+        query = """
+        MERGE (e:Expert {id: $orcid})
+        SET e.name = $name
+        SET e.metadata = $metadata
+        """
+        with self._get_session() as session:
+            session.run(query, {
+                "orcid": orcid,
+                "name": name,
+                "metadata": metadata or {}
+            })
+
+    def create_domain_node(self, domain_id: str, name: str, metadata: Dict = None):
+        """Create or update domain node"""
+        query = """
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        SET d.metadata = $metadata
+        """
+        with self._get_session() as session:
+            session.run(query, {
+                "domain_id": domain_id,
+                "name": name,
+                "metadata": metadata or {}
+            })
+
+    def create_field_node(self, field_id: str, name: str, metadata: Dict = None):
+        """Create or update field node"""
+        query = """
+        MERGE (f:Field {id: $field_id})
+        SET f.name = $name
+        SET f.metadata = $metadata
+        """
+        with self._get_session() as session:
+            session.run(query, {
+                "field_id": field_id,
+                "name": name,
+                "metadata": metadata or {}
+            })
+
+    def create_skill_node(self, skill_id: str, name: str, metadata: Dict = None):
+        """Create or update skill node"""
+        query = """
+        MERGE (s:Skill {id: $skill_id})
+        SET s.name = $name
+        SET s.metadata = $metadata
+        """
+        with self._get_session() as session:
+            session.run(query, {
+                "skill_id": skill_id,
+                "name": name,
+                "metadata": metadata or {}
+            })
+
+    def create_related_to_relationship(
+        self, 
+        from_id: str, 
+        to_id: str, 
+        relationship_type: str,
+        properties: Dict = None
+    ):
+        """Create relationship between nodes"""
+        query = f"""
+        MATCH (n1) WHERE n1.id = $from_id
+        MATCH (n2) WHERE n2.id = $to_id
+        MERGE (n1)-[r:{relationship_type}]->(n2)
+        SET r += $properties
+        """
+        with self._get_session() as session:
+            session.run(query, {
+                "from_id": from_id,
+                "to_id": to_id,
+                "properties": properties or {}
+            })
+
     async def get_similar_experts(self, expert_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Find similar experts using a sophisticated matching algorithm
-        that considers multiple relationship types and weights
-        """
+        """Find similar experts using a sophisticated matching algorithm"""
         query = """
         MATCH (e1:Expert {id: $expert_id})
         MATCH (e2:Expert)
@@ -125,9 +213,7 @@ class Neo4jDatabase:
             return []
 
     async def get_expert_clusters(self, min_cluster_size: int = 3) -> List[Dict[str, Any]]:
-        """
-        Find clusters of experts with similar expertise
-        """
+        """Find clusters of experts with similar expertise"""
         query = """
         CALL gds.graph.project(
             'expertise_graph',
@@ -174,7 +260,7 @@ class Neo4jDatabase:
             return []
 
     def get_expertise_summary(self, expert_id: str) -> Dict[str, Any]:
-        """Enhanced expertise summary with analytics data."""
+        """Enhanced expertise summary with analytics data"""
         query = """
         MATCH (e:Expert {id: $expert_id})
         
@@ -215,7 +301,7 @@ class Neo4jDatabase:
             return {}
 
     def find_expertise_paths(self, expert_id1: str, expert_id2: str, max_depth: int = 3) -> List[Dict[str, Any]]:
-        """Enhanced path finding with connection strength metrics."""
+        """Enhanced path finding with connection strength metrics"""
         query = """
         MATCH p = shortestPath(
             (e1:Expert {id: $expert_id1})-[*1..$max_depth]-(e2:Expert {id: $expert_id2})
@@ -255,7 +341,7 @@ class Neo4jDatabase:
                     "expert_id2": expert_id2,
                     "max_depth": max_depth
                 })
-                return [record["path"] for record in result]
+                return [record["path_data"] for record in result]
         except Exception as e:
             self._logger.error(f"Error finding expertise paths: {e}")
             return []

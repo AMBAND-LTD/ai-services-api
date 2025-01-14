@@ -252,6 +252,22 @@ def create_tables():
 
             # Core table: auth_group
             """
+            CREATE TABLE IF NOT EXISTS expert_interactions (
+                id SERIAL PRIMARY KEY,
+                sender_id INTEGER REFERENCES experts_expert(id),
+                receiver_id INTEGER REFERENCES experts_expert(id),
+                interaction_type VARCHAR(50),  -- e.g., 'message_draft', 'message_sent'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata JSONB DEFAULT '{}'::jsonb,  -- Store additional context like themes, domains
+                success BOOLEAN DEFAULT true
+            )
+            """,
+
+
+            
+
+            # Core table: auth_group
+            """
             CREATE TABLE IF NOT EXISTS auth_group (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(150)
@@ -714,8 +730,12 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_tags_name_type ON tags (tag_name, tag_type)",
             "CREATE INDEX IF NOT EXISTS idx_tags_metadata ON tags USING gin(additional_metadata)",
             "CREATE INDEX IF NOT EXISTS idx_publication_tags_doi ON publication_tags (doi)",
-            "CREATE INDEX IF NOT EXISTS idx_publication_tags_tag ON publication_tags (tag_id)"
-        ]
+            "CREATE INDEX IF NOT EXISTS idx_publication_tags_tag ON publication_tags (tag_id)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_sender ON expert_interactions(sender_id)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_receiver ON expert_interactions(receiver_id)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_type ON expert_interactions(interaction_type)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_created ON expert_interactions(created_at)"
+            ]
 
         # Create indexes
         for index_sql in indexes:

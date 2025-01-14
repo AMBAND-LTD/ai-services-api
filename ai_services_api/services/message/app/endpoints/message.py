@@ -1,12 +1,13 @@
-# app/api/endpoints/messages.py
 from fastapi import APIRouter, HTTPException, Request, Depends
-from typing import List, Optional
+from typing import List, Optional, Dict
 from ai_services_api.services.message.core.database import get_db_connection
 from ai_services_api.services.message.core.config import get_settings
 import google.generativeai as genai
 from datetime import datetime
 import logging
+import json
 from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,47 +17,94 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# User ID dependencies
-async def get_user_id(request: Request) -> int:
+# User ID dependencies - Define these first
+async def get_user_id(request: Request) -> str:
     """Get user ID from request header for production use"""
     user_id = request.headers.get("X-User-ID")
     if not user_id:
         raise HTTPException(status_code=400, detail="X-User-ID header is required")
-    return int(user_id)
+    return user_id
 
-async def get_test_user_id(request: Request) -> int:
+async def get_test_user_id(request: Request) -> str:
     """Get user ID from request header or use default for testing"""
     user_id = request.headers.get("X-User-ID")
     if not user_id:
         user_id = "123"  # Default test user ID
-    return int(user_id)
+    return user_id
 
-async def process_message_draft(
+async def record_expert_interaction(
+    cur,
     sender_id: int,
     receiver_id: int,
+    interaction_type: str,
+    metadata: Dict = None
+):
+    """Record an interaction between experts"""
+    try:
+        # Get sender details
+        cur.execute("""
+            SELECT theme, domains, fields 
+            FROM experts_expert 
+            WHERE id = %s
+        """, (sender_id,))
+        sender_details = cur.fetchone()
+
+        # Get receiver details
+        cur.execute("""
+            SELECT theme, domains, fields 
+            FROM experts_expert 
+            WHERE id = %s
+        """, (receiver_id,))
+        receiver_details = cur.fetchone()
+
+        # Prepare metadata
+        interaction_metadata = {
+            "sender": {
+                "theme": sender_details['theme'] if sender_details else None,
+                "domains": sender_details['domains'] if sender_details else [],
+                "fields": sender_details['fields'] if sender_details else []
+            },
+            "receiver": {
+                "theme": receiver_details['theme'] if receiver_details else None,
+                "domains": receiver_details['domains'] if receiver_details else [],
+                "fields": receiver_details['fields'] if receiver_details else []
+            }
+        }
+
+        # Add any additional metadata
+        if metadata:
+            interaction_metadata.update(metadata)
+
+        # Record the interaction
+        cur.execute("""
+            INSERT INTO expert_interactions 
+                (sender_id, receiver_id, interaction_type, metadata, created_at)
+            VALUES 
+                (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            RETURNING id
+        """, (sender_id, receiver_id, interaction_type, json.dumps(interaction_metadata)))
+
+        return cur.fetchone()['id']
+
+    except Exception as e:
+        logger.error(f"Error recording expert interaction: {str(e)}")
+        return None
+
+async def process_message_draft(
+    user_id: str,
+    receiver_id: str,
     content: str
 ):
-    """Common message draft processing logic"""
-    logger.info(f"Creating draft message from expert {sender_id} to expert {receiver_id}")
+    """Common message draft processing logic with interaction tracking"""
+    logger.info(f"Creating draft message to expert {receiver_id}")
     
-    conn = get_db_connection()
+    conn = None
+    cur = None
     try:
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Get sender and receiver details
-        cur.execute("""
-            SELECT id, first_name, last_name, designation, theme, domains, fields 
-            FROM experts_expert 
-            WHERE id = %s AND is_active = true
-        """, (sender_id,))
-        sender = cur.fetchone()
-        
-        if not sender:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Sender with ID {sender_id} not found or is inactive"
-            )
             
+        # Get receiver details
         cur.execute("""
             SELECT id, first_name, last_name, designation, theme, domains, fields 
             FROM experts_expert 
@@ -76,13 +124,7 @@ async def process_message_draft(
         model = genai.GenerativeModel('gemini-pro')
         
         prompt = f"""
-        Draft a professional message from {sender['first_name']} {sender['last_name']} ({sender['designation'] or 'Expert'}) 
-        to {receiver['first_name']} {receiver['last_name']} ({receiver['designation'] or 'Expert'}).
-        
-        Context about sender:
-        - Theme: {sender['theme'] or 'Not specified'}
-        - Domains: {', '.join(sender['domains'] if sender.get('domains') else ['Not specified'])}
-        - Fields: {', '.join(sender['fields'] if sender.get('fields') else ['Not specified'])}
+        Draft a professional message to {receiver['first_name']} {receiver['last_name']} ({receiver['designation'] or 'Expert'}).
         
         Context about receiver:
         - Theme: {receiver['theme'] or 'Not specified'}
@@ -102,248 +144,131 @@ async def process_message_draft(
             VALUES 
                 (%s, %s, %s, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING id, created_at
-        """, (sender_id, receiver_id, draft_content))
+        """, (1, receiver_id, draft_content))
         
         new_message = cur.fetchone()
+
+        # Record the interaction
+        interaction_metadata = {
+            "message_id": new_message['id'],
+            "content_length": len(draft_content),
+            "context": content
+        }
+        
+        await record_expert_interaction(
+            cur,
+            sender_id=1,  # Using default sender for test
+            receiver_id=int(receiver_id),
+            interaction_type='message_draft',
+            metadata=interaction_metadata
+        )
+
         conn.commit()
 
         return {
-            "id": new_message['id'],
+            "id": str(new_message['id']),
             "content": draft_content,
-            "sender_id": sender_id,
-            "receiver_id": receiver_id,
+            "sender_id": user_id,
+            "receiver_id": str(receiver_id),
             "created_at": new_message['created_at'],
             "draft": True,
-            "sender_name": f"{sender['first_name']} {sender['last_name']}",
-            "receiver_name": f"{receiver['first_name']} {receiver['last_name']}"
+            "receiver_name": f"{receiver['first_name']} {receiver['last_name']}",
+            "sender_name": "Test User"
         }
 
     except Exception as e:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         logger.error(f"Error in process_message_draft: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+# Analytics endpoints
+@router.get("/analytics/interactions")
+async def get_expert_interactions(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    interaction_type: Optional[str] = None
+):
+    """Get analytics on expert interactions"""
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        query = """
+            SELECT 
+                ei.sender_id,
+                ei.receiver_id,
+                ei.interaction_type,
+                ei.created_at,
+                ei.metadata,
+                s.first_name as sender_first_name,
+                s.last_name as sender_last_name,
+                r.first_name as receiver_first_name,
+                r.last_name as receiver_last_name
+            FROM expert_interactions ei
+            JOIN experts_expert s ON ei.sender_id = s.id
+            JOIN experts_expert r ON ei.receiver_id = r.id
+            WHERE 1=1
+        """
+        params = []
+
+        if start_date:
+            query += " AND ei.created_at >= %s"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND ei.created_at <= %s"
+            params.append(end_date)
+            
+        if interaction_type:
+            query += " AND ei.interaction_type = %s"
+            params.append(interaction_type)
+
+        query += " ORDER BY ei.created_at DESC"
+        
+        cur.execute(query, params)
+        interactions = cur.fetchall()
+
+        return {
+            "total_interactions": len(interactions),
+            "interactions": interactions
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching expert interactions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 # Test endpoints
-@router.post("/test/draft")
+@router.get("/test/draft/{receiver_id}/{content}")
 async def test_create_message_draft(
-    sender_id: int,
-    receiver_id: int,
+    receiver_id: str,
     content: str,
-    request: Request
+    request: Request,
+    user_id: str = Depends(get_test_user_id)
 ):
     """Test endpoint for creating draft messages"""
-    return await process_message_draft(sender_id, receiver_id, content)
+    return await process_message_draft(user_id, receiver_id, content)
 
-@router.put("/test/messages/{message_id}")
-async def test_update_message(
-    message_id: int,
-    content: str,
-    mark_as_sent: Optional[bool] = False
-):
-    """Test endpoint for updating messages"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        cur.execute("""
-            UPDATE expert_messages 
-            SET content = %s,
-                draft = CASE WHEN %s THEN false ELSE draft END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            RETURNING *
-        """, (content, mark_as_sent, message_id))
-        
-        updated_message = cur.fetchone()
-        if not updated_message:
-            raise HTTPException(status_code=404, detail="Message not found")
-            
-        conn.commit()
-        return updated_message
-    finally:
-        cur.close()
-        conn.close()
-
-@router.delete("/test/messages/{message_id}")
-async def test_delete_message(message_id: int):
-    """Test endpoint for deleting messages"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        cur.execute("DELETE FROM expert_messages WHERE id = %s RETURNING id", (message_id,))
-        deleted = cur.fetchone()
-        
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Message not found")
-            
-        conn.commit()
-        return {"message": "Message deleted successfully"}
-    finally:
-        cur.close()
-        conn.close()
-
-@router.get("/test/messages/thread/{other_user_id}")
-async def test_get_message_thread(
-    user_id: int,
-    other_user_id: int,
-    limit: int = 50
-):
-    """Test endpoint for getting message threads"""
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    try:
-        cur.execute("""
-            SELECT m.*, 
-                   s.first_name as sender_first_name, 
-                   s.last_name as sender_last_name,
-                   r.first_name as receiver_first_name, 
-                   r.last_name as receiver_last_name
-            FROM expert_messages m
-            JOIN experts_expert s ON m.sender_id = s.id
-            JOIN experts_expert r ON m.receiver_id = r.id
-            WHERE (m.sender_id = %s AND m.receiver_id = %s)
-               OR (m.sender_id = %s AND m.receiver_id = %s)
-            ORDER BY m.created_at DESC
-            LIMIT %s
-        """, (user_id, other_user_id, other_user_id, user_id, limit))
-        
-        messages = cur.fetchall()
-        
-        return [{
-            "id": msg['id'],
-            "content": msg['content'],
-            "sender_id": msg['sender_id'],
-            "receiver_id": msg['receiver_id'],
-            "sender_name": f"{msg['sender_first_name']} {msg['sender_last_name']}",
-            "receiver_name": f"{msg['receiver_first_name']} {msg['receiver_last_name']}",
-            "created_at": msg['created_at'],
-            "draft": msg['draft']
-        } for msg in messages]
-    finally:
-        cur.close()
-        conn.close()
-
-# Production endpoints
-@router.post("/draft")
+# Production endpoint
+@router.get("/draft/{receiver_id}/{content}")
 async def create_message_draft(
-    request: Request,
-    sender_id: int,
-    receiver_id: int,
+    receiver_id: str,
     content: str,
-    user_id: int = Depends(get_user_id)
+    request: Request,
+    user_id: str = Depends(get_user_id)
 ):
     """Production endpoint for creating draft messages"""
-    if user_id != sender_id:
-        raise HTTPException(
-            status_code=403,
-            detail="User ID in header must match sender ID"
-        )
-    return await process_message_draft(sender_id, receiver_id, content)
-
-@router.put("/messages/{message_id}")
-async def update_message(
-    request: Request,
-    message_id: int,
-    content: str,
-    user_id: int = Depends(get_user_id),
-    mark_as_sent: Optional[bool] = False
-):
-    """Production endpoint for updating messages"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        # Verify message ownership
-        cur.execute("SELECT sender_id FROM expert_messages WHERE id = %s", (message_id,))
-        message = cur.fetchone()
-        if not message or message['sender_id'] != user_id:
-            raise HTTPException(status_code=403, detail="Not authorized to update this message")
-        
-        cur.execute("""
-            UPDATE expert_messages 
-            SET content = %s,
-                draft = CASE WHEN %s THEN false ELSE draft END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            RETURNING *
-        """, (content, mark_as_sent, message_id))
-        
-        updated_message = cur.fetchone()
-        conn.commit()
-        return updated_message
-    finally:
-        cur.close()
-        conn.close()
-
-@router.delete("/messages/{message_id}")
-async def delete_message(
-    request: Request,
-    message_id: int,
-    user_id: int = Depends(get_user_id)
-):
-    """Production endpoint for deleting messages"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        # Verify message ownership
-        cur.execute("SELECT sender_id FROM expert_messages WHERE id = %s", (message_id,))
-        message = cur.fetchone()
-        if not message or message['sender_id'] != user_id:
-            raise HTTPException(status_code=403, detail="Not authorized to delete this message")
-        
-        cur.execute("DELETE FROM expert_messages WHERE id = %s RETURNING id", (message_id,))
-        deleted = cur.fetchone()
-        conn.commit()
-        return {"message": "Message deleted successfully"}
-    finally:
-        cur.close()
-        conn.close()
-
-@router.get("/messages/thread/{other_user_id}")
-async def get_message_thread(
-    request: Request,
-    other_user_id: int,
-    user_id: int = Depends(get_user_id),
-    limit: int = 50
-):
-    """Production endpoint for getting message threads"""
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    try:
-        cur.execute("""
-            SELECT m.*, 
-                   s.first_name as sender_first_name, 
-                   s.last_name as sender_last_name,
-                   r.first_name as receiver_first_name, 
-                   r.last_name as receiver_last_name
-            FROM expert_messages m
-            JOIN experts_expert s ON m.sender_id = s.id
-            JOIN experts_expert r ON m.receiver_id = r.id
-            WHERE (m.sender_id = %s AND m.receiver_id = %s)
-               OR (m.sender_id = %s AND m.receiver_id = %s)
-            ORDER BY m.created_at DESC
-            LIMIT %s
-        """, (user_id, other_user_id, other_user_id, user_id, limit))
-        
-        messages = cur.fetchall()
-        
-        return [{
-            "id": msg['id'],
-            "content": msg['content'],
-            "sender_id": msg['sender_id'],
-            "receiver_id": msg['receiver_id'],
-            "sender_name": f"{msg['sender_first_name']} {msg['sender_last_name']}",
-            "receiver_name": f"{msg['receiver_first_name']} {msg['receiver_last_name']}",
-            "created_at": msg['created_at'],
-            "draft": msg['draft']
-        } for msg in messages]
-    finally:
-        cur.close()
-        conn.close()
+    return await process_message_draft(user_id, receiver_id, content)
