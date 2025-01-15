@@ -90,103 +90,24 @@ class KnowhubScraper:
                     logger.info(f"\nProcessing publication {i}/{min(total_items, limit)}")
                     logger.debug(f"Publication HTML preview: {str(item)[:200]}")
                     
-                    # Log item structure before processing
-                    logger.debug("Item classes: %s", item.get('class', []))
-                    logger.debug("Item name: %s", item.name)
-                    
                     publication = self._parse_publication(item)
                     
-                    if not publication:
-                        logger.warning(f"Failed to parse publication {i}, skipping")
-                        continue
-                    
-                    # Detailed logging of publication data structure
-                    logger.debug("Publication data structure:")
-                    for key, value in publication.items():
-                        if key != 'abstract':  # Avoid logging large text
-                            logger.debug(f"{key}: {type(value)}")
-                    
-                    # Safely parse identifiers with type checking
-                    try:
-                        if not isinstance(publication.get('identifiers'), (str, dict)):
-                            logger.error(f"Invalid identifiers type: {type(publication.get('identifiers'))}")
-                            continue
-                        
-                        identifiers = (json.loads(publication['identifiers']) 
-                                    if isinstance(publication['identifiers'], str) 
-                                    else publication['identifiers'])
-                        
-                        # Validate identifiers structure
-                        if not isinstance(identifiers, dict):
-                            logger.error(f"Parsed identifiers is not a dictionary: {type(identifiers)}")
-                            continue
-                        
-                        handle = identifiers.get('handle')
-                        if not handle:
-                            logger.warning("No handle found in identifiers")
-                            logger.debug(f"Identifiers content: {identifiers}")
-                            continue
-                        
-                        if handle in self.seen_handles:
-                            logger.debug(f"Skipping duplicate handle: {handle}")
-                            continue
-                        
-                        # Log successful publication details
-                        logger.info("=" * 80)
-                        logger.info("Successfully processed publication:")
-                        logger.info(f"Title: {publication['title']}")
-                        authors_str = ', '.join(publication['authors']) if publication['authors'] else 'No authors listed'
-                        logger.info(f"Authors: {authors_str}")
-                        logger.info(f"Type: {publication['type']}")
-                        logger.info(f"Date: {publication['date_issue'] or 'No date available'}")
-                        logger.info(f"DOI: {publication.get('doi', 'Not available')}")
-                        logger.info(f"Handle: {handle}")
-                        
-                        # Log data types for debugging
-                        logger.debug("Data types check:")
-                        logger.debug(f"Title type: {type(publication['title'])}")
-                        logger.debug(f"Authors type: {type(publication['authors'])}")
-                        logger.debug(f"Type type: {type(publication['type'])}")
-                        logger.debug(f"Date type: {type(publication['date_issue'])}")
-                        
-                        if identifiers.get('keywords'):
-                            logger.info(f"Keywords: {', '.join(identifiers['keywords'])}")
-                        
-                        if publication['abstract']:
-                            preview_length = 200
-                            abstract_preview = publication['abstract'][:preview_length]
-                            if len(publication['abstract']) > preview_length:
-                                abstract_preview += "..."
-                            logger.info(f"Abstract preview: {abstract_preview}")
-                        
-                        logger.info("=" * 80)
-                        
+                    if publication:
                         publications.append(publication)
-                        self.seen_handles.add(handle)
-                        logger.info(f"Total publications processed: {len(publications)}")
-                        
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON parsing error: {str(e)}")
-                        logger.debug(f"Failed JSON content: {publication.get('identifiers', '')[:200]}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error processing publication metadata: {str(e)}", exc_info=True)
-                        continue
-                    
+                        if len(publications) >= limit:
+                            break
+                            
                 except Exception as e:
                     logger.error(f"Error processing publication item: {str(e)}", exc_info=True)
                     continue
-                
-                if len(publications) >= limit:
-                    logger.info(f"Reached desired limit of {limit} publications")
-                    break
             
             return publications
             
         except Exception as e:
             logger.error(f"Error in fetch_publications: {str(e)}", exc_info=True)
             return publications
-    def fetch_additional_content(self, content_type: str, limit: int = 2) -> List[Dict]:
+
+    def fetch_additional_content(self, content_type: str, limit: int = 10) -> List[Dict]:
         """Fetch content from additional endpoints while preserving original functionality."""
         if content_type not in self.endpoints:
             logger.error(f"Invalid content type: {content_type}")
@@ -194,6 +115,7 @@ class KnowhubScraper:
             
         url = self.endpoints[content_type]
         logger.info(f"Fetching {content_type} from: {url}")
+        contents = []
 
         try:
             # Use existing request and parsing logic
@@ -205,14 +127,15 @@ class KnowhubScraper:
             soup = BeautifulSoup(response.text, 'html.parser')
             items = soup.find_all(['div', 'article'], class_=['ds-artifact-item', 'item-wrapper', 'row artifact-description'])
             
-            results = []
             for i, item in enumerate(items[:limit], 1):
                 try:
+                    logger.info(f"\nProcessing {content_type} item {i}/{min(len(items), limit)}")
                     content = self._parse_publication(item)
+                    
                     if not content:
                         continue
-                        
-                    # Add content type to identifiers
+
+                    # Add content type to metadata
                     identifiers = json.loads(content['identifiers'])
                     identifiers['content_type'] = content_type
                     content['identifiers'] = json.dumps(identifiers)
@@ -227,16 +150,16 @@ class KnowhubScraper:
                         })
                     })
                     
-                    results.append(content)
+                    contents.append(content)
                     
+                    if len(contents) >= limit:
+                        break
+                        
                 except Exception as e:
                     logger.error(f"Error processing {content_type} item {i}: {str(e)}")
                     continue
                     
-                if len(results) >= limit:
-                    break
-                    
-            return results
+            return contents
             
         except Exception as e:
             logger.error(f"Error fetching {content_type}: {str(e)}")
@@ -263,14 +186,13 @@ class KnowhubScraper:
         try:
             logger.info("\nExtracting publication information...")
             
-            # Log element type and structure
             logger.debug(f"Element type: {type(element)}")
             if hasattr(element, 'name'):
                 logger.debug(f"Element name: {element.name}")
             if hasattr(element, 'attrs'):
                 logger.debug(f"Element attributes: {element.attrs}")
             
-            # Extract title with detailed logging
+            # Extract title
             title_elem = None
             if isinstance(element, BeautifulSoup) or hasattr(element, 'find'):
                 logger.debug("Searching for title element...")
@@ -278,21 +200,12 @@ class KnowhubScraper:
                     element.find(['h4', 'h3', 'h2'], class_=['artifact-title', 'item-title']) or
                     element.find('a', class_='item-title')
                 )
-                if title_elem:
-                    logger.debug(f"Found title element: {title_elem.name} with classes {title_elem.get('class', [])}")
-                else:
-                    logger.warning("No title element found with expected classes")
-                    # Log available elements for debugging
-                    logger.debug("Available elements with similar classes:")
-                    for elem in element.find_all(class_=True):
-                        if any(c in str(elem.get('class', [])) for c in ['title', 'artifact']):
-                            logger.debug(f"Found potential title element: {elem.name} with classes {elem.get('class', [])}")
             
             if not title_elem:
                 logger.warning("No title element found")
                 return None
             
-            # Safely extract title text
+            # Get title text
             title = ""
             if hasattr(title_elem, 'get_text'):
                 title = title_elem.get_text().strip()
@@ -304,18 +217,19 @@ class KnowhubScraper:
             title = safe_str(title)
             logger.debug(f"Found title: {title[:100]}...")
             
-            # Get URL and handle with defensive programming
+            # Find the link and extract URL and handle
             url = None
             handle = None
+            content_type = 'other'  # Default content type
             
-            # Try to find the link in different ways
+            # Try to find the link in the title element first
             link = None
             if hasattr(title_elem, 'find'):
                 link = title_elem.find('a')
             if not link and hasattr(title_elem, 'name') and title_elem.name == 'a':
                 link = title_elem
                 
-            # Extract URL and handle safely
+            # Get URL and handle from link
             if link and hasattr(link, 'get'):
                 href = link.get('href', '')
                 if href:
@@ -323,15 +237,44 @@ class KnowhubScraper:
                     handle_match = re.search(r'handle/([0-9/]+)', url)
                     if handle_match:
                         handle = handle_match.group(1)
+                        # Set content type based on handle path
+                        if handle.endswith('123456789/1'):
+                            content_type = 'publications'
+                        elif handle.endswith('123456789/2'):
+                            content_type = 'working_documents'
+                        elif handle.endswith('123456789/3'):
+                            content_type = 'reports'
+                        elif handle.endswith('123456789/4'):
+                            content_type = 'multimedia'
             
-            if not handle:
-                logger.warning("No handle found for publication")
+            # If no URL found in title, try to find it elsewhere in the element
+            if not url:
+                url_elem = element.find('a', href=True)
+                if url_elem:
+                    href = url_elem.get('href', '')
+                    if href:
+                        url = urljoin(self.base_url, href)
+                        handle_match = re.search(r'handle/([0-9/]+)', url)
+                        if handle_match:
+                            handle = handle_match.group(1)
+                            # Set content type based on handle path
+                            if handle.endswith('123456789/1'):
+                                content_type = 'publications'
+                            elif handle.endswith('123456789/2'):
+                                content_type = 'working_documents'
+                            elif handle.endswith('123456789/3'):
+                                content_type = 'reports'
+                            elif handle.endswith('123456789/4'):
+                                content_type = 'multimedia'
+            
+            if not url or not handle:
+                logger.warning("No URL or handle found for publication")
                 return None
             
-            # Extract metadata with defensive programming
+            # Extract metadata
             metadata = self._extract_metadata(element)
             
-            # Generate summary safely
+            # Generate summary
             abstract = metadata.get('abstract', '')
             try:
                 summary = self._generate_summary(title, abstract)
@@ -339,16 +282,16 @@ class KnowhubScraper:
                 logger.error(f"Error generating summary: {e}")
                 summary = abstract or f"Publication about {title}"
             
-            # Create publication record with safe defaults
+            # Create publication record
             publication = {
-                'doi': metadata.get('doi'),
                 'title': title,
+                'doi': url,  # Store the URL in the doi field
                 'abstract': abstract or f"Publication about {title}",
                 'summary': summary,
                 'authors': metadata.get('authors', []),
                 'description': abstract or f"Publication about {title}",
                 'expert_id': None,
-                'type': metadata.get('type', 'other'),
+                'type': content_type,  # Use our handle-based content type
                 'subtitles': json.dumps({}),
                 'publishers': json.dumps({
                     'name': 'APHRC',
@@ -360,11 +303,10 @@ class KnowhubScraper:
                 'citation': metadata.get('citation'),
                 'language': metadata.get('language', 'en'),
                 'identifiers': json.dumps({
-                    'doi': metadata.get('doi'),
                     'handle': handle,
-                    'url': url,
                     'source_id': f"knowhub-{handle.replace('/', '-')}",
-                    'keywords': metadata.get('keywords', [])
+                    'keywords': metadata.get('keywords', []),
+                    'content_type': content_type  # Include content type in identifiers
                 }),
                 'source': 'knowhub',
                 'tags': [
@@ -388,7 +330,7 @@ class KnowhubScraper:
                     }
                     for keyword in metadata.get('keywords', [])
                 ] + [{
-                    'name': metadata.get('type', 'other'),
+                    'name': content_type,  # Use our handle-based content type
                     'tag_type': 'publication_type',
                     'additional_metadata': json.dumps({
                         'source': 'knowhub',
@@ -411,23 +353,20 @@ class KnowhubScraper:
             'keywords': [],
             'type': 'other',
             'date': None,
-            'doi': None,
             'citation': None,
             'language': 'en',
             'abstract': ''
         }
         
         try:
-            # Only proceed if element is a proper BeautifulSoup object
             if not isinstance(element, BeautifulSoup) and not hasattr(element, 'find'):
                 return metadata
                 
-            # Find metadata section
             meta_div = element.find('div', class_=['item-metadata', 'artifact-info'])
             if not meta_div:
                 return metadata
             
-            # Extract authors safely
+            # Extract authors
             author_elems = meta_div.find_all('span', class_=['author', 'creator'])
             metadata['authors'] = [
                 author.get_text().strip() if hasattr(author, 'get_text') else str(author).strip()
@@ -435,18 +374,18 @@ class KnowhubScraper:
                 if author and (hasattr(author, 'get_text') or str(author).strip())
             ]
             
-            # Extract date safely
+            # Extract date
             date_elem = meta_div.find('span', class_=['date', 'issued'])
             if date_elem and hasattr(date_elem, 'get_text'):
                 date_str = date_elem.get_text().strip()
                 metadata['date'] = self._parse_date(date_str)
             
-            # Extract type safely
+            # Extract type
             type_elem = meta_div.find('span', class_=['type', 'resourcetype'])
             if type_elem and hasattr(type_elem, 'get_text'):
                 metadata['type'] = self._normalize_publication_type(type_elem.get_text().strip())
             
-            # Extract DOI safely
+            # Extract DOI if available (for potential future use)
             doi_elem = meta_div.find('span', class_='doi')
             if doi_elem and hasattr(doi_elem, 'get_text'):
                 doi_text = doi_elem.get_text().strip()
@@ -454,7 +393,7 @@ class KnowhubScraper:
                 if doi_match:
                     metadata['doi'] = doi_match.group(0)
             
-            # Extract keywords safely
+            # Extract keywords
             keyword_elems = meta_div.find_all('span', class_=['subject', 'keyword'])
             metadata['keywords'] = [
                 kw.get_text().strip() if hasattr(kw, 'get_text') else str(kw).strip()
@@ -462,10 +401,20 @@ class KnowhubScraper:
                 if kw and (hasattr(kw, 'get_text') or str(kw).strip())
             ]
             
-            # Extract abstract safely
+            # Extract abstract
             abstract_elem = meta_div.find('span', class_=['abstract', 'description'])
             if abstract_elem and hasattr(abstract_elem, 'get_text'):
                 metadata['abstract'] = safe_str(abstract_elem.get_text().strip())
+            
+            # Extract citation if available
+            citation_elem = meta_div.find('span', class_=['citation', 'reference'])
+            if citation_elem and hasattr(citation_elem, 'get_text'):
+                metadata['citation'] = safe_str(citation_elem.get_text().strip())
+            
+            # Extract language if available
+            lang_elem = meta_div.find('span', class_='language')
+            if lang_elem and hasattr(lang_elem, 'get_text'):
+                metadata['language'] = lang_elem.get_text().strip().lower()
             
             return metadata
             
@@ -490,7 +439,12 @@ class KnowhubScraper:
             'thesis': 'thesis',
             'dissertation': 'dissertation',
             'policy brief': 'policy_brief',
-            'data': 'dataset'
+            'data': 'dataset',
+            'dataset': 'dataset',
+            'presentation': 'presentation',
+            'video': 'multimedia',
+            'audio': 'multimedia',
+            'image': 'multimedia'
         }
         
         type_str = type_str.lower().strip()
@@ -508,7 +462,12 @@ class KnowhubScraper:
                 '%Y/%m/%d',
                 '%B %d, %Y',
                 '%d %B %Y',
-                '%Y'
+                '%Y',
+                '%b %d, %Y',
+                '%d %b %Y',
+                '%Y-%m',
+                '%m/%d/%Y',
+                '%d/%m/%Y'
             ]
             
             for fmt in formats:
@@ -519,13 +478,14 @@ class KnowhubScraper:
                     continue
             
             # Try to extract year if full date parsing fails
-            year_match = re.search(r'\d{4}', date_str)
+            year_match = re.search(r'\b(19|20)\d{2}\b', date_str)
             if year_match:
                 return f"{year_match.group(0)}-01-01"
             
             return None
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error parsing date {date_str}: {e}")
             return None
 
     def _generate_summary(self, title: str, abstract: str) -> str:
@@ -533,12 +493,14 @@ class KnowhubScraper:
         try:
             title = truncate_text(title, max_length=200)
             abstract = truncate_text(abstract, max_length=1000)
+            
             try:
                 summary = self.summarizer.summarize(title, abstract)
                 return truncate_text(summary, max_length=500)
             except Exception as e:
                 logger.error(f"Summary generation error: {e}")
                 return abstract if abstract else f"Publication about {title}"
+                
         except Exception as e:
             logger.error(f"Error in summary generation: {e}")
             return title
@@ -573,3 +535,11 @@ class KnowhubScraper:
             logger.info("KnowhubScraper resources cleaned up")
         except Exception as e:
             logger.error(f"Error closing KnowhubScraper: {e}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()

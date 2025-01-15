@@ -357,8 +357,10 @@ def create_tables():
                 subfield_name VARCHAR(255),
                 expert_count INTEGER DEFAULT 0,
                 match_count INTEGER DEFAULT 0,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_matched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Add this line
             )
+            
             """
         ]
 
@@ -431,6 +433,7 @@ def create_tables():
                 publication_matches INTEGER DEFAULT 0,
                 error_occurred BOOLEAN DEFAULT FALSE,
                 context JSONB,
+                metrics JSONB, 
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
@@ -629,7 +632,8 @@ def create_tables():
             # Independent table: expert_matching_logs
             """
             CREATE TABLE IF NOT EXISTS expert_matching_logs (
-                id SERIAL PRIMARY KEY,
+                id SERIAL PRIMARY KEY,  -- Add a separate id column
+                user_id VARCHAR(255) NOT NULL,  -- Remove PRIMARY KEY constraint
                 expert_id VARCHAR(255) NOT NULL,
                 matched_expert_id VARCHAR(255) NOT NULL,
                 similarity_score FLOAT,
@@ -734,8 +738,15 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_expert_interactions_sender ON expert_interactions(sender_id)",
             "CREATE INDEX IF NOT EXISTS idx_expert_interactions_receiver ON expert_interactions(receiver_id)",
             "CREATE INDEX IF NOT EXISTS idx_expert_interactions_type ON expert_interactions(interaction_type)",
-            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_created ON expert_interactions(created_at)"
-            ]
+            "CREATE INDEX IF NOT EXISTS idx_expert_interactions_created ON expert_interactions(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_satisfaction ON chat_interactions USING gin((metrics->'aspects'->>'satisfaction'))",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_urgency ON chat_interactions USING gin((metrics->'aspects'->>'urgency'))",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_clarity ON chat_interactions USING gin((metrics->'aspects'->>'clarity'))",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_sentiment_score ON chat_interactions USING gin((metrics->>'sentiment_score') gin_trgm_ops)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_satisfaction ON chat_interactions USING gin((metrics->'aspects'->>'satisfaction') gin_trgm_ops)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_urgency ON chat_interactions USING gin((metrics->'aspects'->>'urgency') gin_trgm_ops)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_clarity ON chat_interactions USING gin((metrics->'aspects'->>'clarity') gin_trgm_ops)"
+                ]
 
         # Create indexes
         for index_sql in indexes:

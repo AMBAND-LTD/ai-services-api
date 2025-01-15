@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 from utils.theme import toggle_theme
 import streamlit as st
-
 def create_sidebar_filters():
     """
     Create an enhanced sidebar with interactive navigation buttons and dynamic filters.
-    Includes sections for all analytics types including adaptive recommendations.
+    The sidebar now features distinct sections for navigation and contextual filters
+    that update based on the selected analytics type.
     
     Returns:
         tuple: Contains the following elements:
@@ -24,28 +24,28 @@ def create_sidebar_filters():
     if 'selected_analytics' not in st.session_state:
         st.session_state.selected_analytics = "Overview"
     
-    # Navigation Section with three columns for better layout
+    # Navigation Section
     st.sidebar.markdown("### Navigation")
     
-    col1, col2, col3 = st.sidebar.columns(3)
-    
+    # Create a row of buttons for analytics types
+    col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.button("📊 Overview", use_container_width=True):
             st.session_state.selected_analytics = "Overview"
-        if st.button("🤖 AI Chat", use_container_width=True):
+        if st.button("💬 Chat", use_container_width=True):
             st.session_state.selected_analytics = "Chat"
-        
-    with col2:
         if st.button("🔍 Search", use_container_width=True):
             st.session_state.selected_analytics = "Search"
+            
+    with col2:
         if st.button("👥 Expert", use_container_width=True):
             st.session_state.selected_analytics = "Expert"
-            
-    with col3:
-        if st.button("🧠 Adaptive", use_container_width=True):
-            st.session_state.selected_analytics = "Adaptive"
+        if st.button("📚 Content", use_container_width=True):
+            st.session_state.selected_analytics = "Content"
         if st.button("📈 Usage", use_container_width=True):
             st.session_state.selected_analytics = "Usage"
+        if st.button("📈 Adaptive", use_container_width=True):
+            st.session_state.selected_analytics = "Adaptive"
     
     # Common Filters Section
     st.sidebar.markdown("### Time Range")
@@ -118,37 +118,22 @@ def create_sidebar_filters():
             default=["Health"]
         )
         filters['show_network'] = st.sidebar.checkbox("Show Expert Network")
-
-    elif st.session_state.selected_analytics == "Adaptive":
-        filters['show_success_rate'] = st.sidebar.checkbox(
-            "Show Success Rate Trends",
-            value=True
+        
+    elif st.session_state.selected_analytics == "Content":
+        filters['content_type'] = st.sidebar.multiselect(
+            "Content Types",
+            ["Research Papers", "Reports", "Presentations", "Datasets"],
+            default=["Research Papers"]
         )
-        filters['show_components'] = st.sidebar.checkbox(
-            "Show Component Analysis",
-            value=True
+        filters['collections'] = st.sidebar.multiselect(
+            "Collections",
+            ["Public Health", "Population Studies", "Policy Research"],
+            default=["Public Health"]
         )
-        filters['show_search_impact'] = st.sidebar.checkbox(
-            "Show Search Impact",
-            value=True
-        )
-        filters['min_interactions'] = st.sidebar.number_input(
-            "Minimum Interactions",
-            min_value=1,
+        filters['min_views'] = st.sidebar.number_input(
+            "Minimum Views",
+            min_value=0,
             value=10
-        )
-        filters['weight_threshold'] = st.sidebar.slider(
-            "Weight Significance Threshold",
-            0.0, 1.0, 0.3
-        )
-        filters['interaction_types'] = st.sidebar.multiselect(
-            "Interaction Types",
-            ["message_draft", "recommendation_shown", "expert_clicked"],
-            default=["message_draft", "recommendation_shown"]
-        )
-        filters['visualization_type'] = st.sidebar.selectbox(
-            "Visualization Type",
-            ["Time Series", "Component Distribution", "Network Graph"]
         )
         
     elif st.session_state.selected_analytics == "Usage":
@@ -164,42 +149,11 @@ def create_sidebar_filters():
         )
         filters['show_conversion'] = st.sidebar.checkbox("Show Conversion Metrics")
     
-    # Advanced Options Section
-    if st.sidebar.checkbox("Show Advanced Options"):
-        st.sidebar.markdown("### Advanced Options")
-        
-        # Data granularity
-        filters['granularity'] = st.sidebar.select_slider(
-            "Data Granularity",
-            options=["Hourly", "Daily", "Weekly", "Monthly"],
-            value="Daily"
-        )
-        
-        # Visualization options
-        filters['chart_type'] = st.sidebar.selectbox(
-            "Chart Type",
-            ["Line", "Bar", "Area", "Scatter"]
-        )
-        
-        # Statistical analysis options
-        if st.sidebar.checkbox("Include Statistical Analysis"):
-            filters['statistical_methods'] = st.sidebar.multiselect(
-                "Statistical Methods",
-                ["Trend Analysis", "Correlation", "Regression", "Hypothesis Testing"],
-                default=["Trend Analysis"]
-            )
-    
-    # Export Options
+    # Export Options (common across all types)
     if st.sidebar.checkbox("Enable Export"):
         filters['export_format'] = st.sidebar.selectbox(
             "Export Format",
-            ["CSV", "Excel", "PDF", "JSON"]
+            ["CSV", "Excel", "PDF"]
         )
-        if filters['export_format'] == "Excel":
-            filters['excel_sheets'] = st.sidebar.multiselect(
-                "Excel Sheets to Include",
-                ["Raw Data", "Summary", "Visualizations", "Analysis"],
-                default=["Raw Data", "Summary"]
-            )
     
     return start_date, end_date, st.session_state.selected_analytics, filters

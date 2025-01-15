@@ -126,10 +126,9 @@ class WebsiteScraper:
                                 logger.error(f"Summary generation failed: {e}")
                         
                         # Create publication record
-                        doi = f"10.0000/aphrc-{hashlib.md5(url.encode()).hexdigest()[:16]}"
                         publication = {
                             'title': safe_str(title),
-                            'doi': doi,
+                            'doi': url,  # Using URL as the DOI
                             'authors': authors,
                             'domains': [],  # No domain info found yet
                             'type': 'publication',  # Default type

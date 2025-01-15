@@ -3,7 +3,6 @@ import logging
 import aiohttp
 import asyncio
 import uuid
-
 import time
 from typing import Dict, List, Optional, Any, Tuple
 from dotenv import load_dotenv
@@ -74,7 +73,6 @@ class OpenAlexProcessor:
         except Exception as e:
             logger.error(f"Initialization error: {e}")
             raise
-
     async def load_initial_experts(self, expertise_csv: str):
         """Load initial expert data from CSV, skipping existing experts."""
         try:
@@ -327,6 +325,20 @@ class OpenAlexProcessor:
                                 break
 
                             try:
+                                # Extract DOI or URL for the work
+                                doi = work.get('doi')
+                                urls = work.get('alternate_host_venues', [])
+                                primary_url = None
+                                if urls:
+                                    # Try to get URL from the first alternate host venue
+                                    primary_url = urls[0].get('url')
+                                if not primary_url:
+                                    # Fallback to OpenAlex URL
+                                    primary_url = work.get('id', '').replace('https://openalex.org/', 'https://explore.openalex.org/')
+
+                                # Store either DOI or URL in the doi field
+                                work['doi'] = doi if doi else primary_url
+
                                 self.db.execute("BEGIN")
                                 processed = pub_processor.process_single_work(work, source=source)
                                 
@@ -350,7 +362,6 @@ class OpenAlexProcessor:
                 
         except Exception as e:
             logger.error(f"Error processing publications: {e}")
-
     async def _fetch_expert_publications(self, session: aiohttp.ClientSession, orcid: str,
                                    per_page: int = 5) -> List[Dict[str, Any]]:
         """Fetch publications for an expert."""

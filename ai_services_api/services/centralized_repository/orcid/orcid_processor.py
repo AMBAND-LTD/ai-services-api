@@ -4,7 +4,7 @@ import asyncio
 import aiohttp
 import requests
 from typing import List, Dict, Optional
-import json  # Add at the top of both files
+import json
 from ai_services_api.services.centralized_repository.database_manager import DatabaseManager
 from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
 from ai_services_api.services.centralized_repository.publication_processor import PublicationProcessor
@@ -118,7 +118,7 @@ class OrcidProcessor:
                     fetched_works = await self._fetch_expert_publications(
                         session, 
                         expert['orcid'],
-                        expert,  # Pass the expert dictionary
+                        expert,
                         per_page=min(5, max_publications - publication_count)
                     )
                     
@@ -127,12 +127,10 @@ class OrcidProcessor:
                             if publication_count >= max_publications:
                                 break
                                 
-                            # Convert ORCID work to standard format with expert info
-                            work = self._convert_orcid_to_standard_format(work_summary, expert)  # Pass expert here
+                            work = self._convert_orcid_to_standard_format(work_summary, expert)
                             if not work:
                                 continue
                                 
-                            # Process publication and its tags in a single transaction
                             self.db.execute("BEGIN")
                             try:
                                 processed = pub_processor.process_single_work(work, source=source)
@@ -196,7 +194,6 @@ class OrcidProcessor:
                             if not work_summaries or not isinstance(work_summaries, list):
                                 continue
                             
-                            # Take the first work summary from each group
                             summary = work_summaries[0]
                             if not isinstance(summary, dict):
                                 continue
@@ -227,48 +224,51 @@ class OrcidProcessor:
             Optional[Dict]: Standardized work data or None if conversion fails
         """
         try:
-            # Validate input types
-            if not isinstance(work, dict):
-                logger.error(f"Work must be a dictionary, got {type(work)}")
-                return None
-                
-            if not isinstance(expert, dict):
-                logger.error(f"Expert must be a dictionary, got {type(expert)}")
+            if not isinstance(work, dict) or not isinstance(expert, dict):
+                logger.error(f"Invalid input types: work={type(work)}, expert={type(expert)}")
                 return None
 
-            # Extract title safely
-            title = ""
+            # Extract title
             title_container = work.get('title', {})
-            if isinstance(title_container, dict):
-                title = title_container.get('title', {}).get('value', '')
+            title = title_container.get('title', {}).get('value', '') if isinstance(title_container, dict) else ''
 
-            # Extract publication date safely
+            # Extract publication date
             pub_date = work.get('publication-date', {})
-            year = ""
-            if isinstance(pub_date, dict):
-                year_container = pub_date.get('year', {})
-                if isinstance(year_container, dict):
-                    year = year_container.get('value', '')
+            year = pub_date.get('year', {}).get('value', '') if isinstance(pub_date, dict) else ''
 
-            # Extract URL safely
-            url = ""
+            # Get the URL from multiple possible sources
+            url = None
+            
+            # First try the URL field
             url_container = work.get('url', {})
             if isinstance(url_container, dict):
                 url = url_container.get('value', '')
 
-            # Extract type safely
-            work_type = work.get('type', '')
-            if not isinstance(work_type, str):
-                work_type = ''
+            # If no URL, try DOI
+            if not url:
+                doi = self._get_identifier(work, 'doi')
+                if doi:
+                    url = f"https://doi.org/{doi}"
 
-            # Process contributors safely
+            # If still no URL, try other identifiers
+            if not url:
+                for id_type in ['handle', 'uri']:
+                    identifier = self._get_identifier(work, id_type)
+                    if identifier:
+                        url = identifier
+                        break
+
+            # If still no URL, create one from ORCID work
+            if not url:
+                url = f"https://orcid.org/{expert['orcid']}/work/{work.get('put-code', '')}"
+
+            # Process contributors
             contributors = []
             contributors_container = work.get('contributors', {})
             if isinstance(contributors_container, dict):
                 for contributor in contributors_container.get('contributor', []):
                     if not isinstance(contributor, dict):
                         continue
-                        
                     credit_name = contributor.get('credit-name', {})
                     if isinstance(credit_name, dict):
                         name = credit_name.get('value', '')
@@ -278,7 +278,7 @@ class OrcidProcessor:
                                 'role': contributor.get('contributor-attributes', {}).get('contributor-role', '')
                             })
 
-            # Build response
+            # Build response with URL as DOI
             response_data = {
                 'id': str(uuid.uuid4()),
                 'source': 'orcid',
@@ -286,14 +286,13 @@ class OrcidProcessor:
                 'expert_last_name': str(expert.get('last_name', '')),
                 'expert_orcid': str(expert.get('orcid', '')),
                 'title': title,
-                'type': work_type,
-                'url': url,
+                'type': work.get('type', ''),
+                'doi': url,  # Store URL in the doi field
                 'contributors': contributors,
                 'publication_year': year,
                 'journal': work.get('journal-title', {}).get('value', '')
             }
 
-            # Validate required fields
             if not response_data['title']:
                 logger.warning("Work missing required title field")
                 return None
@@ -308,13 +307,6 @@ class OrcidProcessor:
     def _get_identifier(self, work_summary: Dict, id_type: str) -> str:
         """
         Extract a specific identifier from work summary.
-        
-        Args:
-            work_summary (Dict): Work summary dictionary
-            id_type (str): Type of identifier to extract (e.g., 'doi')
-        
-        Returns:
-            str: Extracted identifier or empty string
         """
         try:
             external_ids = work_summary.get('external-ids', {}).get('external-id', [])
@@ -326,9 +318,7 @@ class OrcidProcessor:
         return ''
 
     def close(self):
-        """
-        Close database connection and cleanup resources.
-        """
+        """Close database connection and cleanup resources."""
         try:
             if hasattr(self, 'db'):
                 self.db.close()
