@@ -39,6 +39,8 @@ services:
       - SKIP_PUBLICATIONS=${SKIP_PUBLICATIONS:-false}
       - SKIP_GRAPH=${SKIP_GRAPH:-false}
       - SKIP_SEARCH=${SKIP_SEARCH:-false}
+      - SKIP_DATABASE=${SKIP_DATABASE:-false}
+      - SKIP_EXPERTS=${SKIP_EXPERTS:-false}
       - SKIP_REDIS=${SKIP_REDIS:-false}
       - CHROME_BIN=/usr/bin/chromium
       - CHROME_BINARY=/usr/bin/chromium
@@ -69,7 +71,7 @@ services:
       start_period: 100s
     env_file:
       - .env
-    restart: "unless-stopped"
+    restart: "no"
     deploy:
       resources:
         limits:

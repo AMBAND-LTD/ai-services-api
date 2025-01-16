@@ -1,13 +1,11 @@
 import os
 import logging
 import psycopg2
-from urllib.parse import urlparse
 from neo4j import GraphDatabase
-from dotenv import load_dotenv
-import google.generativeai as genai
 from typing import List, Dict, Any
 import json
-
+from urllib.parse import urlparse
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -20,10 +18,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-pro')
-
 class GraphDatabaseInitializer:
     def __init__(self):
         """Initialize GraphDatabaseInitializer."""
@@ -35,80 +29,7 @@ class GraphDatabaseInitializer:
                 os.getenv('NEO4J_PASSWORD')
             )
         )
-
-        # Initialize Gemini
-        try:
-            genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-            self.model = genai.GenerativeModel('gemini-pro')
-            logger.info("Gemini model initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing Gemini model: {e}")
-            # Set a flag to indicate Gemini is not available
-            self.model = None
-
-    def _normalize_expertise(self, expertise_list: List[str]) -> Dict[str, Any]:
-        """Use Gemini to normalize and categorize expertise"""
-        if not expertise_list:
-            return {
-                "primary_domains": [],
-                "specific_fields": [],
-                "technical_skills": []
-            }
-
-        # If Gemini is not available, use fallback categorization
-        if self.model is None:
-            return {
-                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
-                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
-                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
-            }
-
-        prompt = f"""
-        Analyze these areas of expertise and categorize them into the following structure.
-        Expertise: {', '.join(expertise_list)}
-
-        Return only the JSON structure below with these exact keys, nothing else:
-        {{
-            "primary_domains": [],
-            "specific_fields": [],
-            "technical_skills": []
-        }}
-        """
-
-        try:
-            response = self.model.generate_content(prompt)
-            response_text = response.text.strip()
-            
-            # Extract JSON if it's embedded in the response
-            if '{\n' in response_text or '{' in response_text:
-                json_start = response_text.find('{')
-                json_end = response_text.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    json_str = response_text[json_start:json_end]
-                    try:
-                        categories = json.loads(json_str)
-                        # Validate required keys
-                        required_keys = {"primary_domains", "specific_fields", "technical_skills"}
-                        if all(key in categories for key in required_keys):
-                            return categories
-                    except json.JSONDecodeError:
-                        logger.error("Failed to parse Gemini response as JSON")
-            
-            # Fallback categorization if parsing fails
-            return {
-                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
-                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
-                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
-            }
-
-        except Exception as e:
-            logger.error(f"Error using Gemini model: {str(e)}")
-            # Return a basic categorization as fallback
-            return {
-                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
-                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
-                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
-            }
+        logger.info("Neo4j driver initialized")
 
     @staticmethod
     def get_db_connection():
@@ -142,13 +63,24 @@ class GraphDatabaseInitializer:
             raise
 
     def _create_indexes(self):
-        """Create necessary indexes in Neo4j"""
+        """Create enhanced indexes in Neo4j"""
         index_queries = [
+            # Node indexes
             "CREATE INDEX expert_id IF NOT EXISTS FOR (e:Expert) ON (e.id)",
+            "CREATE INDEX expert_name IF NOT EXISTS FOR (e:Expert) ON (e.name)",
+            "CREATE INDEX expert_orcid IF NOT EXISTS FOR (e:Expert) ON (e.orcid)",
             "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
             "CREATE INDEX field_name IF NOT EXISTS FOR (f:Field) ON (f.name)",
+            "CREATE INDEX subfield_name IF NOT EXISTS FOR (sf:Subfield) ON (sf.name)",
             "CREATE INDEX expertise_name IF NOT EXISTS FOR (ex:Expertise) ON (ex.name)",
-            "CREATE INDEX skill_name IF NOT EXISTS FOR (s:Skill) ON (s.name)"
+            "CREATE INDEX theme_name IF NOT EXISTS FOR (t:Theme) ON (t.name)",
+            "CREATE INDEX unit_name IF NOT EXISTS FOR (u:Unit) ON (u.name)",
+            
+            # Fulltext indexes for search
+            """CREATE FULLTEXT INDEX expert_fulltext IF NOT EXISTS 
+               FOR (e:Expert) ON EACH [e.name, e.designation]""",
+            """CREATE FULLTEXT INDEX expertise_fulltext IF NOT EXISTS 
+               FOR (ex:Expertise) ON EACH [ex.name]"""
         ]
         
         with self._neo4j_driver.session() as session:
@@ -160,7 +92,7 @@ class GraphDatabaseInitializer:
                     logger.warning(f"Error creating index: {e}")
 
     def _fetch_experts_data(self):
-        """Fetch experts data from PostgreSQL"""
+        """Fetch experts data from PostgreSQL with enhanced data retrieval"""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -172,9 +104,14 @@ class GraphDatabaseInitializer:
                     first_name, 
                     last_name,
                     knowledge_expertise,
-                    domains, 
-                    fields, 
-                    subfields
+                    designation,
+                    theme,
+                    unit,
+                    orcid,
+                    domains,
+                    fields,
+                    subfields,
+                    is_active
                 FROM experts_expert
                 WHERE id IS NOT NULL
             """)
@@ -189,66 +126,119 @@ class GraphDatabaseInitializer:
             if conn:
                 conn.close()
 
-    def create_expert_node(self, session, expert_id: str, name: str, expertise_categories: Dict[str, List[str]]):
-        """Create or update an expert node with categorized expertise"""
+    def create_expert_node(self, session, expert_data: tuple):
+        """Create expert node with enhanced relationship structure"""
         try:
-            # Validate expertise categories
-            required_keys = {"primary_domains", "specific_fields", "technical_skills"}
-            if not all(key in expertise_categories for key in required_keys):
-                logger.warning(f"Missing required categories for expert {name}. Using empty lists for missing categories.")
-                expertise_categories = {
-                    "primary_domains": expertise_categories.get("primary_domains", []),
-                    "specific_fields": expertise_categories.get("specific_fields", []),
-                    "technical_skills": expertise_categories.get("technical_skills", [])
-                }
+            # Unpack basic expert data
+            (expert_id, first_name, last_name, knowledge_expertise, designation, 
+             theme, unit, orcid, domains, fields, subfields, is_active) = expert_data
+            
+            expert_name = f"{first_name} {last_name}"
 
-            # Create expert node
-            session.run(
-                """
-                MERGE (e:Expert {id: $id}) 
-                SET e.name = $name
-                """, 
-                {"id": str(expert_id), "name": name}
-            )
+            # Create expert node with enhanced metadata
+            session.run("""
+                MERGE (e:Expert {id: $id})
+                SET e.name = $name,
+                    e.designation = $designation,
+                    e.theme = $theme,
+                    e.unit = $unit,
+                    e.orcid = $orcid,
+                    e.is_active = $is_active,
+                    e.updated_at = datetime()
+            """, {
+                "id": str(expert_id),
+                "name": expert_name,
+                "designation": designation,
+                "theme": theme,
+                "unit": unit,
+                "orcid": orcid,
+                "is_active": is_active
+            })
 
-            # Create and connect expertise categories
-            for domain in expertise_categories["primary_domains"]:
-                if domain:  # Only create non-empty domains
-                    session.run(
-                        """
-                        MATCH (e:Expert {id: $expert_id})
-                        MERGE (d:Domain {name: $domain})
-                        MERGE (e)-[:HAS_DOMAIN]->(d)
-                        """,
-                        {"expert_id": str(expert_id), "domain": domain}
-                    )
+            # Create knowledge expertise relationships
+            if knowledge_expertise:
+                for expertise in knowledge_expertise:
+                    if expertise:
+                        session.run("""
+                            MERGE (ex:Expertise {name: $expertise})
+                            MERGE (e:Expert {id: $expert_id})-[r:HAS_EXPERTISE]->(ex)
+                            SET r.weight = 1.0,
+                                r.last_updated = datetime()
+                        """, {
+                            "expert_id": str(expert_id),
+                            "expertise": expertise
+                        })
 
-            for field in expertise_categories["specific_fields"]:
-                if field:  # Only create non-empty fields
-                    session.run(
-                        """
-                        MATCH (e:Expert {id: $expert_id})
-                        MERGE (f:Field {name: $field})
-                        MERGE (e)-[:HAS_FIELD]->(f)
-                        """,
-                        {"expert_id": str(expert_id), "field": field}
-                    )
+            # Create theme and unit relationships
+            if theme:
+                session.run("""
+                    MERGE (t:Theme {name: $theme})
+                    MERGE (e:Expert {id: $expert_id})-[r:BELONGS_TO_THEME]->(t)
+                    SET r.last_updated = datetime()
+                """, {
+                    "expert_id": str(expert_id),
+                    "theme": theme
+                })
 
-            for skill in expertise_categories["technical_skills"]:
-                if skill:  # Only create non-empty skills
-                    session.run(
-                        """
-                        MATCH (e:Expert {id: $expert_id})
-                        MERGE (s:Skill {name: $skill})
-                        MERGE (e)-[:HAS_SKILL]->(s)
-                        """,
-                        {"expert_id": str(expert_id), "skill": skill}
-                    )
+            if unit:
+                session.run("""
+                    MERGE (u:Unit {name: $unit})
+                    MERGE (e:Expert {id: $expert_id})-[r:BELONGS_TO_UNIT]->(u)
+                    SET r.last_updated = datetime()
+                """, {
+                    "expert_id": str(expert_id),
+                    "unit": unit
+                })
 
-            logger.info(f"Successfully created/updated expert node: {name}")
+            # Create domain relationships with weights
+            if domains:
+                for domain in domains:
+                    if domain:
+                        session.run("""
+                            MERGE (d:Domain {name: $domain})
+                            MERGE (e:Expert {id: $expert_id})-[r:HAS_DOMAIN]->(d)
+                            SET r.weight = 1.0,
+                                r.level = 'primary',
+                                r.last_updated = datetime()
+                        """, {
+                            "expert_id": str(expert_id),
+                            "domain": domain
+                        })
+
+            # Create field relationships with weights
+            if fields:
+                for field in fields:
+                    if field:
+                        session.run("""
+                            MERGE (f:Field {name: $field})
+                            MERGE (e:Expert {id: $expert_id})-[r:HAS_FIELD]->(f)
+                            SET r.weight = 0.7,
+                                r.level = 'secondary',
+                                r.last_updated = datetime()
+                        """, {
+                            "expert_id": str(expert_id),
+                            "field": field
+                        })
+
+            # Create subfield relationships with weights if they exist
+            if subfields:
+                for subfield in subfields:
+                    if subfield:
+                        session.run("""
+                            MERGE (sf:Subfield {name: $subfield})
+                            MERGE (e:Expert {id: $expert_id})-[r:HAS_SUBFIELD]->(sf)
+                            SET r.weight = 0.5,
+                                r.level = 'tertiary',
+                                r.last_updated = datetime()
+                        """, {
+                            "expert_id": str(expert_id),
+                            "subfield": subfield
+                        })
+
+            logger.info(f"Successfully created/updated expert node: {expert_name}")
 
         except Exception as e:
-            logger.error(f"Error creating expert node: {e}")
+            logger.error(f"Error creating expert node for {expert_id}: {e}")
             raise
 
     def initialize_graph(self):
@@ -268,26 +258,8 @@ class GraphDatabaseInitializer:
             with self._neo4j_driver.session() as session:
                 for expert_data in experts_data:
                     try:
-                        # Unpack data
-                        (expert_id, first_name, last_name, knowledge_expertise, 
-                         domains, fields, subfields) = expert_data
-
-                        if not expert_id:
-                            continue
-
-                        # Normalize expertise using Gemini
-                        expertise_categories = self._normalize_expertise(knowledge_expertise)
-
-                        # Create expert node with categorized expertise
-                        expert_name = f"{first_name} {last_name}"
-                        self.create_expert_node(
-                            session, 
-                            expert_id, 
-                            expert_name, 
-                            expertise_categories
-                        )
-
-                        logger.info(f"Processed expert: {expert_name}")
+                        # Create expert node with comprehensive relationships
+                        self.create_expert_node(session, expert_data)
 
                     except Exception as e:
                         logger.error(f"Error processing expert data: {e}")
@@ -303,6 +275,7 @@ class GraphDatabaseInitializer:
         """Close the Neo4j driver"""
         if self._neo4j_driver:
             self._neo4j_driver.close()
+            logger.info("Neo4j driver closed")
 
 def main():
     initializer = GraphDatabaseInitializer()
@@ -310,7 +283,6 @@ def main():
         initializer.initialize_graph()
     except Exception as e:
         logger.error(f"Initialization failed: {e}")
-        raise
     finally:
         initializer.close()
 

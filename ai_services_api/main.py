@@ -7,6 +7,8 @@ from ai_services_api.controllers.chatbot_router import api_router as chatbot_rou
 from ai_services_api.controllers.search_router import api_router as search_router
 from ai_services_api.controllers.recommendation_router import api_router as recommendation_router
 from ai_services_api.controllers.message_router import api_router as message_router
+from ai_services_api.controllers.test_router import api_router as test_router
+
 
 # Create the FastAPI app instance
 app = FastAPI(

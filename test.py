@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from typing import Optional
 from dotenv import load_dotenv
 
-from ai_services_api.services.centralized_repository.openalex.openalex_processor import OpenAlexProcessor
-from ai_services_api.services.centralized_repository.publication_processor import PublicationProcessor
-from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
-from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
-from ai_services_api.services.search.indexing.index_creator import ExpertSearchIndexManager
-from ai_services_api.services.chatbot.indexing.redis_index_manager import ExpertRedisIndexManager
-from ai_services_api.services.centralized_repository.database_setup import DatabaseInitializer, ExpertManager
+from services.centralized_repository.openalex.openalex_processor import OpenAlexProcessor
+from services.centralized_repository.publication_processor import PublicationProcessor
+from services.centralized_repository.ai_summarizer import TextSummarizer
+from services.recommendation.graph_initializer import GraphDatabaseInitializer
+from services.search.indexing.index_creator import ExpertSearchIndexManager
+from services.chatbot.indexing.redis_index_manager import ExpertRedisIndexManager
+from services.centralized_repository.database_setup import DatabaseInitializer, ExpertManager
 
 # Configure logging
 logging.basicConfig(
