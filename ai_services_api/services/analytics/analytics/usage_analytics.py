@@ -175,16 +175,10 @@ def create_metric_chart(
 
 def display_usage_analytics(filters: Dict[str, Any], metrics: Dict[str, pd.DataFrame]) -> None:
     try:
-        st.title("Usage Analytics Dashboard")
-        
+        # Check if all expected DataFrames exist and have data
         activity_data = metrics.get('activity_metrics', pd.DataFrame())
         session_data = metrics.get('sessions', pd.DataFrame())
         perf_data = metrics.get('performance', pd.DataFrame())
-        
-        # Check if all expected DataFrames exist and have data
-        logger.info(f"Activity Data: {not activity_data.empty}")
-        logger.info(f"Session Data: {not session_data.empty}")
-        logger.info(f"Performance Data: {not perf_data.empty}")
         
         # Overview metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -201,96 +195,62 @@ def display_usage_analytics(filters: Dict[str, Any], metrics: Dict[str, pd.DataF
             total_users = activity_data['total_users'].sum() if not activity_data.empty else 0
             st.metric("Total Users", f"{total_users:,}")
 
-        # Activity Metrics Section
+        # Daily Active Users
         if not activity_data.empty:
-            st.header("User Activity")
-            
-            # Daily Active Users
-            fig = px.line(
-                activity_data,
-                x='date',
-                y=['chat_users', 'search_users', 'total_users'],
-                title='Daily Active Users'
+            st.plotly_chart(
+                px.line(
+                    activity_data,
+                    x="date",
+                    y=["total_users", "chat_users", "search_users"],
+                    title="Daily Active Users",
+                    labels={"value": "Count", "variable": "Metric"}
+                )
             )
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Daily Interactions
-            fig = px.line(
-                activity_data,
-                x='date',
-                y='total_interactions',
-                title='Daily Total Interactions'
+        
+        # Total Interactions
+        if not activity_data.empty:
+            st.plotly_chart(
+                px.line(
+                    activity_data,
+                    x="date",
+                    y="total_interactions",
+                    title="Total Interactions"
+                )
             )
-            st.plotly_chart(fig, use_container_width=True)
 
-        # Session Metrics Section
+        # Session Duration
         if not session_data.empty:
-            st.header("Session Analytics")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig = px.line(
+            st.plotly_chart(
+                px.line(
                     session_data,
-                    x='date',
-                    y='avg_session_duration',
-                    title='Average Session Duration (seconds)'
+                    x="date",
+                    y="avg_session_duration",
+                    title="Average Session Duration"
                 )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                fig = px.line(
-                    session_data,
-                    x='date',
-                    y='avg_messages_per_session',
-                    title='Average Messages per Session'
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            )
 
-        # Performance Metrics Section
+        # Performance Metrics
         if not perf_data.empty:
-            st.header("System Performance")
+            # Average Response Time
+            st.plotly_chart(
+                px.line(
+                    perf_data,
+                    x="date",
+                    y="avg_response_time",
+                    title="Average Response Time"
+                )
+            )
             
-            # Response Time
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.line(
+            # Success and Error Rates
+            st.plotly_chart(
+                px.line(
                     perf_data,
-                    x='date',
-                    y='avg_response_time',
-                    title='Average Response Time (seconds)'
+                    x="date",
+                    y=["success_rate", "error_rate"],
+                    title="Success and Error Rates"
                 )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                fig = px.line(
-                    perf_data,
-                    x='date',
-                    y=['success_rate', 'error_rate'],
-                    title='Success and Error Rates (%)'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Query Metrics
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.line(
-                    perf_data,
-                    x='date',
-                    y='total_queries',
-                    title='Total Queries'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                fig = px.line(
-                    perf_data,
-                    x='date',
-                    y='unique_users',
-                    title='Unique Users'
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            )
 
     except Exception as e:
         logger.error(f"Error displaying analytics: {str(e)}")
-        logger.error(traceback.format_exc())
         st.error("An error occurred while displaying the analytics. Please try again later.")

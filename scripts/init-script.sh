@@ -100,7 +100,7 @@ initialize_app() {
     # Only create search index if not skipped
     if [ "${SKIP_SEARCH:-false}" != "true" ]; then
         echo "[$(date)] Creating search index..."
-        if ! python -m ai_services_api.services.search.search.index_creator; then
+        if ! python -m ai_services_api.services.search.indexing.index_creator; then
             echo "[$(date)] Search index creation failed"
             return 1
         fi

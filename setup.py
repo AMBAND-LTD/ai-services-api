@@ -1,4 +1,3 @@
-
 import os
 import logging
 import argparse
@@ -6,9 +5,8 @@ import asyncio
 from dotenv import load_dotenv
 
 from ai_services_api.services.centralized_repository.database_setup import (
-    create_database_if_not_exists,
+    create_database_if_not_exists,  # Changed from create_database_if_not_exists
     create_tables,
-    fix_experts_table,
     get_db_connection
 )
 
@@ -16,8 +14,8 @@ from ai_services_api.services.centralized_repository.openalex.openalex_processor
 from ai_services_api.services.centralized_repository.publication_processor import PublicationProcessor
 from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
-from ai_services_api.services.search.search.index_creator import ExpertSearchIndexManager
-from ai_services_api.services.search.db.redis.redis_index_manager import ExpertRedisIndexManager
+from ai_services_api.services.search.indexing.index_creator import ExpertSearchIndexManager
+from ai_services_api.services.chatbot.indexing.redis_index_manager import ExpertRedisIndexManager
 from ai_services_api.services.centralized_repository.orcid.orcid_processor import OrcidProcessor
 from ai_services_api.services.centralized_repository.knowhub.knowhub_scraper import KnowhubScraper
 from ai_services_api.services.centralized_repository.website.website_scraper import WebsiteScraper
@@ -52,6 +50,39 @@ def setup_environment():
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 def initialize_database(args):
+    """Initialize database and create tables."""
+    try:
+        logger.info("Ensuring database exists...")
+        create_database()
+        
+        logger.info("Creating database tables...")
+        create_tables()
+        
+        # Verify tables exist
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'resources_resource'
+                );
+            """)
+            if cur.fetchone()[0]:
+                logger.info("resources_resource table created successfully")
+            else:
+                raise Exception("Failed to create resources_resource table")
+        finally:
+            cur.close()
+            conn.close()
+        
+        logger.info("Database initialization complete!")
+        
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
+
+def initialize_database(args):
     try:
         logger.info("Ensuring database exists...")
         create_database_if_not_exists()
@@ -77,8 +108,7 @@ def initialize_database(args):
             cur.close()
             conn.close()
         
-        logger.info("Fixing experts table...")
-        fix_experts_table()
+        
         
         logger.info("Database initialization complete!")
         

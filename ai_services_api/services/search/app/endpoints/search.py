@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import logging
 from datetime import datetime
-from ai_services_api.services.search.search.index_creator import ExpertSearchIndexManager
+from ai_services_api.services.search.indexing.index_creator import ExpertSearchIndexManager
 from ai_services_api.services.search.ml.ml_predictor import MLPredictor
 from ai_services_api.services.search.db.database_manager import DatabaseManager
 

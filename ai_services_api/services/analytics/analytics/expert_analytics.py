@@ -1,6 +1,10 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import plotly.express as px
+from plotly.subplots import make_subplots
+import logging
+from typing import Dict, Optional, Any
 
 def get_expert_metrics(conn, start_date, end_date, expert_count):
     cursor = conn.cursor()
@@ -51,24 +55,43 @@ def get_expert_metrics(conn, start_date, end_date, expert_count):
     finally:
         cursor.close()
 
-def display_expert_analytics(expert_metrics,filters):
+def display_expert_analytics(expert_metrics, filters):
     """
-    Display expert analytics visualizations using the provided expert metrics DataFrame.
-
-    This function creates various visualizations to analyze and compare expert performance, including:
-    1. Expert performance matrix heatmap showing similarity score, chat click-through rate (CTR), and search CTR.
-    2. Expert metrics table displaying expert name, unit, chat matches, search matches, chat CTR, and search CTR.
-
-    The visualizations are created using Plotly Graph Objects and displayed using Streamlit's `st.plotly_chart` 
-    and `st.dataframe` functions.
-
+    Display enhanced expert analytics visualizations.
+    
     Parameters:
     - expert_metrics (pandas.DataFrame): A DataFrame containing the expert metrics data.
+    - filters (dict): Filters applied to the analytics
     """
     st.subheader("Expert Analytics")
+
+    # Key metrics summary
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Experts", f"{len(expert_metrics):,}")
+    with col2:
+        st.metric("Total Chat Matches", f"{expert_metrics['chat_matches'].sum():,}")
+    with col3:
+        st.metric("Total Search Matches", f"{expert_metrics['search_matches'].sum():,}")
+    with col4:
+        st.metric("Avg Chat Similarity", f"{expert_metrics['chat_similarity'].mean():.2f}")
     
-    # Expert performance heatmap
-    fig = go.Figure(data=go.Heatmap(
+    # Create multi-panel visualization with more space
+    fig = make_subplots(
+        rows=2, 
+        cols=2, 
+        subplot_titles=(
+            "Expert Performance Matrix", 
+            "Top Experts by Chat Matches", 
+            "Expert Similarity Distribution", 
+            "Search vs Chat Engagement"
+        ),
+        vertical_spacing=0.15,  # Increased vertical spacing
+        horizontal_spacing=0.1  # Increased horizontal spacing
+    )
+
+    # 1. Expert Performance Heatmap (Top Left)
+    performance_matrix = go.Heatmap(
         z=[
             expert_metrics.chat_similarity,
             expert_metrics.chat_click_rate,
@@ -76,15 +99,111 @@ def display_expert_analytics(expert_metrics,filters):
         ],
         x=expert_metrics.expert_name,
         y=['Similarity Score', 'Chat CTR', 'Search CTR'],
-        colorscale='Viridis'
-    ))
-    fig.update_layout(title='Expert Performance Matrix')
-    st.plotly_chart(fig)
-    
-    # Expert metrics table
-    st.dataframe(
-        expert_metrics[[
-            'expert_name', 'unit', 'chat_matches', 'search_matches',
-            'chat_click_rate', 'search_click_rate'
-        ]].sort_values('chat_matches', ascending=False)
+        colorscale='Viridis',
+        name='Performance Matrix'
     )
+    fig.add_trace(performance_matrix, row=1, col=1)
+
+    # 2. Top Experts by Chat Matches (Top Right)
+    top_experts = expert_metrics.nlargest(10, 'chat_matches')
+    top_experts_bar = go.Bar(
+        x=top_experts['expert_name'], 
+        y=top_experts['chat_matches'], 
+        name='Chat Matches',
+        text=top_experts['chat_matches'].round(2),
+        textposition='auto',
+        orientation='v'  # Vertical orientation
+    )
+    fig.add_trace(top_experts_bar, row=1, col=2)
+
+    # 3. Expert Similarity Distribution (Bottom Left)
+    similarity_hist = go.Histogram(
+        x=expert_metrics['chat_similarity'], 
+        name='Chat Similarity Distribution',
+        nbinsx=20
+    )
+    fig.add_trace(similarity_hist, row=2, col=1)
+
+    # 4. Search vs Chat Engagement (Bottom Right)
+    scatter = go.Scatter(
+        x=expert_metrics['chat_matches'], 
+        y=expert_metrics['search_matches'], 
+        mode='markers',
+        name='Expert Engagement',
+        text=expert_metrics['expert_name'],
+        hoverinfo='text+x+y',
+        marker=dict(
+            size=10,
+            color=expert_metrics['chat_similarity'],  # Color by similarity
+            colorscale='Viridis',
+            showscale=True
+        )
+    )
+    fig.add_trace(scatter, row=2, col=2)
+
+    # Update layout for better readability
+    fig.update_layout(
+        height=900,  # Increased height
+        width=1200,  # Added width to prevent squeezing
+        title_text="Comprehensive Expert Analytics",
+        showlegend=True,
+        legend_orientation="h",
+        legend=dict(y=1.1, x=0.5, xanchor='center'),
+        margin=dict(l=50, r=50, t=100, b=50)  # Adjusted margins
+    )
+
+    # Update axis labels
+    fig.update_xaxes(title_text="Experts", row=1, col=1, tickangle=-45)
+    fig.update_xaxes(title_text="Experts", row=1, col=2, tickangle=-45)
+    fig.update_xaxes(title_text="Chat Similarity", row=2, col=1)
+    fig.update_xaxes(title_text="Chat Matches", row=2, col=2)
+    
+    fig.update_yaxes(title_text="Metrics", row=1, col=1)
+    fig.update_yaxes(title_text="Frequency", row=2, col=1)
+    fig.update_yaxes(title_text="Search Matches", row=2, col=2)
+
+    # Display the comprehensive visualization
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Expert Details Table
+    st.subheader("Expert Performance Details")
+    display_columns = [
+        'expert_name', 'unit', 'chat_matches', 'search_matches',
+        'chat_click_rate', 'search_click_rate', 'chat_similarity'
+    ]
+    
+    # Create a styled DataFrame
+    expert_display = expert_metrics[display_columns].sort_values('chat_matches', ascending=False)
+    st.dataframe(
+        expert_display.style.background_gradient(
+            subset=['chat_matches', 'search_matches', 'chat_click_rate', 'search_click_rate'], 
+            cmap='YlGnBu'
+        ),
+        use_container_width=True
+    )
+
+    # Insights and Analysis
+    with st.expander("Expert Analytics Insights"):
+        # Calculate and display key insights
+        insights = []
+        
+        # Top Performing Experts
+        top_chat_expert = expert_metrics.loc[expert_metrics['chat_matches'].idxmax(), 'expert_name']
+        insights.append(f"Top Chat Expert: {top_chat_expert}")
+        
+        # Similarity Score Analysis
+        avg_similarity = expert_metrics['chat_similarity'].mean()
+        similarity_std = expert_metrics['chat_similarity'].std()
+        insights.append(f"Average Chat Similarity: {avg_similarity:.2f} ± {similarity_std:.2f}")
+        
+        # Engagement Analysis
+        engagement_correlation = expert_metrics['chat_matches'].corr(expert_metrics['search_matches'])
+        insights.append(f"Chat vs Search Matches Correlation: {engagement_correlation:.2f}")
+        
+        # Display insights
+        for insight in insights:
+            st.write(f"• {insight}")
+
+    # Warning for limited data
+    if len(expert_metrics) < 5:
+        st.warning("Limited expert data. More comprehensive insights will become available with more experts.")

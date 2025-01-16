@@ -275,8 +275,6 @@ def display_content_analytics(
 ) -> None:
     """Display content analytics dashboard with robust error handling."""
     try:
-        st.title("Content Analytics Dashboard")
-        
         # Ensure metrics is a dictionary
         if not isinstance(metrics, dict):
             st.error("Invalid metrics data. Unable to display analytics.")
@@ -287,28 +285,29 @@ def display_content_analytics(
             st.warning("No data available for the selected date range. Please adjust your filters and try again.")
             return
 
+        # Add subheader
+        st.subheader("Content Analytics")
+
         # 1. Overview Section
-        st.header("Overview")
-        resource_metrics = metrics['resource_metrics']
-        
         col1, col2, col3 = st.columns(3)
         with col1:
-            total_resources = safe_aggregate(resource_metrics, 'total_resources')
+            total_resources = safe_aggregate(metrics['resource_metrics'], 'total_resources')
             st.metric("Total Resources", f"{total_resources:,}")
         with col2:
             expert_metrics = metrics['expert_metrics']
             total_searches = safe_aggregate(expert_metrics, 'search_count')
             st.metric("Total Expert Searches", f"{total_searches:,}")
         with col3:
-            unique_domains = safe_aggregate(resource_metrics, 'unique_domains')
+            unique_domains = safe_aggregate(metrics['resource_metrics'], 'unique_domains')
             st.metric("Unique Domains", f"{unique_domains:,}")
 
         # 2. Resource Distribution Section
-        st.header("Resource Distribution")
+        resource_metrics = metrics['resource_metrics']
         if not resource_metrics.empty:
             col1, col2 = st.columns(2)
             
             with col1:
+                # Content Sources Pie Chart
                 fig_source = create_visualization(
                     resource_metrics,
                     'pie',
@@ -322,6 +321,7 @@ def display_content_analytics(
                     st.plotly_chart(fig_source, use_container_width=True)
             
             with col2:
+                # Content Types Pie Chart
                 fig_type = create_visualization(
                     resource_metrics,
                     'pie',
@@ -335,37 +335,37 @@ def display_content_analytics(
                     st.plotly_chart(fig_type, use_container_width=True)
 
         # 3. Expert Analytics Section
-        st.header("Expert Analytics")
         expert_metrics = metrics['expert_metrics']
         if not expert_metrics.empty:
             col1, col2 = st.columns(2)
             
             with col1:
+                # Top 10 Most Searched Experts
                 fig_experts = create_visualization(
                     expert_metrics.head(10),
                     'bar',
                     'expert_name',
                     'search_count',
-                    'Top 10 Most Searched Experts'
+                    'Top Searched Experts'
                 )
                 if fig_experts:
                     fig_experts.update_layout(xaxis_tickangle=-45)
                     st.plotly_chart(fig_experts, use_container_width=True)
             
             with col2:
+                # Top 10 Experts by Unique Searchers
                 fig_searchers = create_visualization(
                     expert_metrics.head(10),
                     'bar',
                     'expert_name',
                     'unique_searchers',
-                    'Top 10 Experts by Unique Searchers'
+                    'Experts by Unique Searchers'
                 )
                 if fig_searchers:
                     fig_searchers.update_layout(xaxis_tickangle=-45)
                     st.plotly_chart(fig_searchers, use_container_width=True)
 
             # Expert details table
-            st.subheader("Expert Details")
             try:
                 display_columns = [
                     'expert_name', 'designation', 'theme', 
@@ -384,15 +384,15 @@ def display_content_analytics(
                 logger.error(f"Error displaying expert table: {str(e)}")
 
         # 4. Domain Analytics Section
-        st.header("Domain Analytics")
         domain_metrics = metrics['domain_metrics']
         if not domain_metrics.empty:
+            # Domain Coverage Analysis
             fig_domains = create_visualization(
                 domain_metrics,
                 'scatter',
                 'resource_count',
                 'expert_count',
-                'Domain Coverage Analysis',
+                'Domain Coverage',
                 hover_data=['domain_name'],
                 size='resource_count'
             )
@@ -400,8 +400,6 @@ def display_content_analytics(
                 st.plotly_chart(fig_domains, use_container_width=True)
 
             # Domain distribution table
-            # Domain distribution table
-            st.subheader("Top Domains")
             try:
                 display_columns = ['domain_name', 'resource_count', 'expert_count']
                 if all(col in domain_metrics.columns for col in display_columns):
@@ -418,15 +416,15 @@ def display_content_analytics(
                 st.error("Unable to display domain metrics table.")
 
         # 5. Popular Resources Section
-        st.header("Popular Resources")
         popular_resources = metrics['popular_resources']
         if not popular_resources.empty:
+            # Top 10 Most Viewed Resources
             fig_popularity = create_visualization(
                 popular_resources.head(10),
                 'bar',
                 'title',
                 'expert_views',
-                'Top 10 Most Viewed Resources',
+                'Most Viewed Resources',
                 barmode='group'
             )
             if fig_popularity:
@@ -439,7 +437,6 @@ def display_content_analytics(
                 st.plotly_chart(fig_popularity, use_container_width=True)
 
             # Popular resources table
-            st.subheader("Detailed Resource Metrics")
             try:
                 df_display = popular_resources.copy()
                 # Convert array columns to strings

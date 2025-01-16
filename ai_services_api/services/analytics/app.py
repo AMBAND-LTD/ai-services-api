@@ -3,6 +3,7 @@ from analytics.adaptive_analytics import get_adaptive_metrics, display_adaptive_
 from analytics.search_analytics import get_search_metrics, display_search_analytics
 from analytics.expert_analytics import get_expert_metrics, display_expert_analytics
 from analytics.overview_analytics import get_overview_metrics, display_overview_analytics
+from analytics.resource_analytics import get_resource_metrics, display_resource_analytics
 from analytics.content_analytics import get_content_metrics, display_content_analytics
 from analytics.usage_analytics import get_usage_metrics, display_usage_analytics
 from components.sidebar import create_sidebar_filters
@@ -68,17 +69,6 @@ class UnifiedAnalyticsDashboard:
             self.logger.error(f"Application error: {str(e)}")
             st.error("An unexpected error occurred. Please contact support if the issue persists.")
 
-    def display_header(self, analytics_type):
-        """Display the dashboard header with current analytics type."""
-        title_color = "#FFFFFF" if st.session_state.theme == 'dark' else "#000000"
-        st.markdown(
-            f"""
-            <h1 style="color: {title_color};">APHRC Analytics Dashboard</h1>
-            <h3 style="color: {title_color};">{analytics_type} Analytics</h3>
-            """,
-            unsafe_allow_html=True
-        )
-
     def display_analytics(self, analytics_type, start_date, end_date, filters):
         """Display analytics based on selected type and filters."""
         # Ensure start_date and end_date are datetime objects
@@ -86,9 +76,6 @@ class UnifiedAnalyticsDashboard:
             start_date = datetime.combine(start_date, datetime.min.time())
         if isinstance(end_date, date):
             end_date = datetime.combine(end_date, datetime.max.time())
-
-        # Display overall metrics for context
-        self.display_overall_metrics(start_date, end_date)
         
         # Display specific analytics based on selection
         analytics_map = {
@@ -99,7 +86,7 @@ class UnifiedAnalyticsDashboard:
             "Content": (get_content_metrics, display_content_analytics),
             "Usage": (get_usage_metrics, display_usage_analytics),
             "Adaptive": (get_adaptive_metrics, display_adaptive_analytics),
-
+            "Resources": (get_resource_metrics, display_resource_analytics),  # Changed to singular
         }
         
         if analytics_type in analytics_map:
@@ -117,8 +104,13 @@ class UnifiedAnalyticsDashboard:
                 else:
                     metrics = get_metrics(self.conn, start_date, end_date)
                 
-                # Display analytics with filters applied
-                display_analytics(metrics, filters)
+                # Only display specific type's analytics if not Overview
+                if analytics_type != "Overview":
+                    # Display analytics with filters applied
+                    display_analytics(metrics, filters)
+                else:
+                    # For Overview, we want to show the comprehensive view
+                    display_analytics(metrics, filters)
                 
                 # Handle export if enabled
                 if 'export_format' in filters:
@@ -128,6 +120,16 @@ class UnifiedAnalyticsDashboard:
                 self.logger.error(f"Error in display_analytics for {analytics_type}: {str(e)}")
                 st.error(f"An error occurred while processing {analytics_type} analytics.")
 
+    def display_header(self, analytics_type):
+        """Display the dashboard header with current analytics type."""
+        title_color = "#FFFFFF" if st.session_state.theme == 'dark' else "#000000"
+        
+        st.markdown(
+            f"""
+            <h1 style="color: {title_color};">APHRC Analytics Dashboard</h1>
+            """,
+            unsafe_allow_html=True
+        )
     def display_overall_metrics(self, start_date, end_date):
         """Display overall platform metrics."""
         col1, col2, col3, col4 = st.columns(4)

@@ -4,8 +4,6 @@ import streamlit as st
 def create_sidebar_filters():
     """
     Create an enhanced sidebar with interactive navigation buttons and dynamic filters.
-    The sidebar now features distinct sections for navigation and contextual filters
-    that update based on the selected analytics type.
     
     Returns:
         tuple: Contains the following elements:
@@ -27,25 +25,30 @@ def create_sidebar_filters():
     # Navigation Section
     st.sidebar.markdown("### Navigation")
     
-    # Create a row of buttons for analytics types
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        if st.button("📊 Overview", use_container_width=True):
-            st.session_state.selected_analytics = "Overview"
-        if st.button("💬 Chat", use_container_width=True):
-            st.session_state.selected_analytics = "Chat"
-        if st.button("🔍 Search", use_container_width=True):
-            st.session_state.selected_analytics = "Search"
-            
-    with col2:
-        if st.button("👥 Expert", use_container_width=True):
-            st.session_state.selected_analytics = "Expert"
-        if st.button("📚 Content", use_container_width=True):
-            st.session_state.selected_analytics = "Content"
-        if st.button("📈 Usage", use_container_width=True):
-            st.session_state.selected_analytics = "Usage"
-        if st.button("📈 Adaptive", use_container_width=True):
-            st.session_state.selected_analytics = "Adaptive"
+    # Analytics types - 2 per row
+    nav_types = [
+        ("📊 Overview", "Overview"),
+        ("💬 Chat", "Chat"),
+        ("🔍 Search", "Search"),
+        ("👥 Expert", "Expert"),
+        ("📚 Content", "Content"),
+        ("📈 Usage", "Usage"),
+        ("📈 Adaptive", "Adaptive"),
+        ("🔧 Resources", "Resources")  # Added Resources option
+    ]
+    
+    # Create navigation buttons in rows of 2
+    for i in range(0, len(nav_types), 2):
+        col1, col2 = st.sidebar.columns(2)
+        
+        with col1:
+            if st.button(nav_types[i][0], use_container_width=True):
+                st.session_state.selected_analytics = nav_types[i][1]
+        
+        if i + 1 < len(nav_types):
+            with col2:
+                if st.button(nav_types[i+1][0], use_container_width=True):
+                    st.session_state.selected_analytics = nav_types[i+1][1]
     
     # Common Filters Section
     st.sidebar.markdown("### Time Range")
@@ -149,7 +152,25 @@ def create_sidebar_filters():
         )
         filters['show_conversion'] = st.sidebar.checkbox("Show Conversion Metrics")
     
-    # Export Options (common across all types)
+    # Add Resources-specific filters
+    elif st.session_state.selected_analytics == "Resources":
+        filters['resource_type'] = st.sidebar.multiselect(
+            "Resource Types",
+            ["Airflow Jobs", "API Keys", "Computational Resources", "Storage"],
+            default=["Airflow Jobs", "API Keys"]
+        )
+        filters['status'] = st.sidebar.multiselect(
+            "Status",
+            ["Running", "Failed", "Pending", "Completed"],
+            default=["Running"]
+        )
+        filters['time_range'] = st.sidebar.selectbox(
+            "Time Range",
+            ["Last Hour", "Last 6 Hours", "Last 24 Hours", "Last 7 Days"],
+            index=1
+        )
+    
+    # Export Options
     if st.sidebar.checkbox("Enable Export"):
         filters['export_format'] = st.sidebar.selectbox(
             "Export Format",
