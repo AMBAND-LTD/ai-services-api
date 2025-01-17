@@ -4,10 +4,11 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any, Optional
 import redis
 from dotenv import load_dotenv
-from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 import os
 import time
 import json
+from src.utils.db_utils import DatabaseConnector
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +21,7 @@ class ExpertRedisIndexManager:
     def __init__(self):
         """Initialize Redis index manager for experts."""
         try:
+            self.db = DatabaseConnector()  # Initialize the database connector
             load_dotenv()
             self.embedding_model = SentenceTransformer(
                 os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
@@ -29,6 +31,7 @@ class ExpertRedisIndexManager:
         except Exception as e:
             logger.error(f"Error initializing ExpertRedisIndexManager: {e}")
             raise
+
 
     def setup_redis_connections(self):
         """Setup Redis connections with retry logic."""
@@ -74,63 +77,62 @@ class ExpertRedisIndexManager:
             conn = None
             cur = None
             try:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                
-                # Check if table exists
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'experts_expert'
-                    );
-                """)
-                if not cur.fetchone()[0]:
-                    logger.warning("experts_expert table does not exist yet")
-                    return []
-                
-                # Updated query to use only existing columns
-                cur.execute("""
-                    SELECT 
-                        id,
-                        email,
-                        knowledge_expertise,
-                        is_active,
-                        is_staff,
-                        created_at,
-                        updated_at,
-                        bio,
-                        orcid,
-                        first_name,
-                        last_name,
-                        contact_details,
-                        unit,
-                        designation,
-                        theme
-                    FROM experts_expert
-                    WHERE id IS NOT NULL
-                """)
-                
-                experts = [{
-                    'id': row[0],
-                    'email': row[1],
-                    'knowledge_expertise': self._parse_jsonb(row[2]),
-                    'is_active': row[3],
-                    'is_staff': row[4],
-                    'created_at': row[5].isoformat() if row[5] else None,
-                    'updated_at': row[6].isoformat() if row[6] else None,
-                    'bio': row[7] or '',
-                    'orcid': row[8],
-                    'first_name': row[9] or '',
-                    'last_name': row[10] or '',
-                    'contact_details': row[11],
-                    'unit': row[12] or '',
-                    'designation': row[13] or '',
-                    'theme': row[14] or ''
-                } for row in cur.fetchall()]
-                
-                logger.info(f"Fetched {len(experts)} experts from database")
-                return experts
-                
+                conn = self.db.get_connection()
+                with conn.cursor() as cur:
+                    # Check if table exists
+                    cur.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'experts_expert'
+                        );
+                    """)
+                    if not cur.fetchone()[0]:
+                        logger.warning("experts_expert table does not exist yet")
+                        return []
+                    
+                    # Updated query to use only existing columns
+                    cur.execute("""
+                        SELECT 
+                            id,
+                            email,
+                            knowledge_expertise,
+                            is_active,
+                            is_staff,
+                            created_at,
+                            updated_at,
+                            bio,
+                            orcid,
+                            first_name,
+                            last_name,
+                            contact_details,
+                            unit,
+                            designation,
+                            theme
+                        FROM experts_expert
+                        WHERE id IS NOT NULL
+                    """)
+                    
+                    experts = [{
+                        'id': row[0],
+                        'email': row[1],
+                        'knowledge_expertise': self._parse_jsonb(row[2]),
+                        'is_active': row[3],
+                        'is_staff': row[4],
+                        'created_at': row[5].isoformat() if row[5] else None,
+                        'updated_at': row[6].isoformat() if row[6] else None,
+                        'bio': row[7] or '',
+                        'orcid': row[8],
+                        'first_name': row[9] or '',
+                        'last_name': row[10] or '',
+                        'contact_details': row[11],
+                        'unit': row[12] or '',
+                        'designation': row[13] or '',
+                        'theme': row[14] or ''
+                    } for row in cur.fetchall()]
+                    
+                    logger.info(f"Fetched {len(experts)} experts from database")
+                    return experts
+                    
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
                 if attempt < max_retries - 1:
@@ -143,6 +145,7 @@ class ExpertRedisIndexManager:
                     cur.close()
                 if conn:
                     conn.close()
+
 
     def _parse_jsonb(self, data):
         """Parse JSONB data safely."""

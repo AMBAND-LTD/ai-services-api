@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Optional, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 from ai_services_api.services.centralized_repository.database_setup import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -13,12 +14,31 @@ class MLPredictor:
         self.recent_queries = defaultdict(list)
         self.max_recent = 1000
         self.time_window = 24
-        self.conn = get_db_connection()
-        self.cur = self.conn.cursor()
+        self._initialize_db_connection()
+
+    def _initialize_db_connection(self):
+        """Initialize database connection and cursor"""
+        try:
+            with get_db_connection() as connection:
+                self.conn = connection
+                self.cur = self.conn.cursor()
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection: {e}")
+            raise
+
+    def _ensure_connection(self):
+        """Ensure database connection is active, reconnect if necessary"""
+        try:
+            # Try a simple query to test connection
+            self.cur.execute("SELECT 1")
+        except Exception as e:
+            logger.warning(f"Database connection lost, attempting to reconnect: {e}")
+            self._initialize_db_connection()
 
     def _execute_query(self, query: str, params: tuple = None) -> List[Dict]:
         """Execute a database query and return results as dictionaries"""
         try:
+            self._ensure_connection()
             self.cur.execute(query, params)
             if self.cur.description:
                 columns = [desc[0] for desc in self.cur.description]

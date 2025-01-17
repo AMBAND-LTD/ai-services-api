@@ -15,7 +15,7 @@ from ai_services_api.services.centralized_repository.publication_processor impor
 from ai_services_api.services.centralized_repository.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
 from ai_services_api.services.search.indexing.index_creator import ExpertSearchIndexManager
-from ai_services_api.services.chatbot.indexing.redis_index_manager import ExpertRedisIndexManager
+from ai_services_api.services.search.indexing.redis_index_manager import ExpertRedisIndexManager
 from ai_services_api.services.centralized_repository.database_setup import DatabaseInitializer, ExpertManager
 from ai_services_api.services.centralized_repository.orcid.orcid_processor import OrcidProcessor
 from ai_services_api.services.centralized_repository.knowhub.knowhub_scraper import KnowhubScraper
@@ -282,25 +282,34 @@ class SystemInitializer:
         finally:
             openalex_processor.close()
 
-    def create_search_indices(self) -> bool:
-        """Create search indices in FAISS and Redis"""
+    def create_search_index(self) -> bool:
+        """Create the FAISS search index."""
+        index_creator = ExpertSearchIndexManager()
         try:
             if not self.config.skip_search:
                 logger.info("Creating FAISS search index...")
-                if not ExpertSearchIndexManager().create_faiss_index():
+                if not index_creator.create_faiss_index():
                     raise Exception("FAISS index creation failed")
-
-            if not self.config.skip_redis:
-                logger.info("Creating Redis search index...")
-                redis_manager = ExpertRedisIndexManager()
-                if not (redis_manager.clear_redis_indexes() and 
-                       redis_manager.create_redis_index()):
-                    raise Exception("Redis index creation failed")
-
             return True
         except Exception as e:
-            logger.error(f"Search index creation failed: {e}")
+            logger.error(f"FAISS search index creation failed: {e}")
             return False
+
+
+    def create_redis_index(self) -> bool:
+        """Create the Redis search index."""
+        try:
+            if not self.config.skip_redis:
+                logger.info("Creating Redis search index...")
+                redis_creator = ExpertRedisIndexManager()
+                if not (redis_creator.clear_redis_indexes() and 
+                        redis_creator.create_redis_index()):
+                    raise Exception("Redis index creation failed")
+            return True
+        except Exception as e:
+            logger.error(f"Redis search index creation failed: {e}")
+            return False
+
 
     async def initialize_system(self) -> None:
         """Main initialization flow"""
@@ -320,7 +329,10 @@ class SystemInitializer:
                 if not self.initialize_graph():
                     raise Exception("Graph initialization failed")
                 
-            if not self.create_search_indices():
+            if not self.create_search_index():
+                    raise Exception("Search index creation failed")
+
+            if not self.create_redis_index():
                     raise Exception("Search index creation failed")
                 
             logger.info("System initialization completed successfully!")
