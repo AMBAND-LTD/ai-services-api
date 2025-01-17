@@ -30,14 +30,6 @@ class PublicationProcessor:
             # First create tables
             tables = [
                 """
-                CREATE TABLE IF NOT EXISTS publication_tags (
-                    doi VARCHAR(255),
-                    title TEXT,
-                    tag_id INTEGER,
-                    PRIMARY KEY (doi, tag_id)
-                )
-                """,
-                """
                 ALTER TABLE resources_resource 
                 ADD COLUMN IF NOT EXISTS topics TEXT[]
                 """
@@ -47,26 +39,18 @@ class PublicationProcessor:
                 try:
                     self.db.execute(table_sql)
                 except Exception as e:
-                    logger.error(f"Error creating table: {e}")
+                    logger.error(f"Error creating table modification: {e}")
                     raise
 
-            # Then create indexes
+            # Modify indexes to match existing tables
             indexes = [
                 """
                 CREATE INDEX IF NOT EXISTS idx_resources_doi 
                 ON resources_resource(doi);
                 """,
                 """
-                CREATE INDEX IF NOT EXISTS idx_authors_name 
-                ON authors_ai(name);
-                """,
-                """
-                CREATE INDEX IF NOT EXISTS idx_author_publication 
-                ON author_publication_ai(doi, author_id);
-                """,
-                """
-                CREATE INDEX IF NOT EXISTS idx_publication_tags 
-                ON publication_tags(doi, tag_id);
+                CREATE INDEX IF NOT EXISTS idx_experts_name 
+                ON experts_expert(first_name, last_name);
                 """,
                 """
                 CREATE INDEX IF NOT EXISTS idx_resource_topics 
@@ -75,8 +59,12 @@ class PublicationProcessor:
             ]
             
             for index_sql in indexes:
-                self.db.execute(index_sql)
-                
+                try:
+                    self.db.execute(index_sql)
+                except Exception as e:
+                    logger.error(f"Error creating index: {e}")
+                    continue
+                    
             logger.info("Database tables and indexes verified/created successfully")
         except Exception as e:
             logger.error(f"Error setting up database indexes: {e}")
@@ -373,36 +361,7 @@ class PublicationProcessor:
         except Exception as e:
             logger.error(f"Error processing domains: {e}")
 
-    def _process_tag(self, concept: Dict, doi: str) -> None:
-        """
-        Process a single concept/tag and link to publication.
-        
-        Args:
-            concept: Concept information dictionary
-            doi: Publication DOI
-        """
-        try:
-            tag_name = concept.get('display_name')
-            if not tag_name:
-                return
-
-            tag_info = {
-                'name': tag_name,
-                'type': 'concept',
-                'score': concept.get('score'),
-                'level': concept.get('level'),
-                'wikidata_id': concept.get('wikidata')
-            }
-
-            try:
-                tag_id = self.db.add_tag(tag_info)
-                self.db.link_publication_tag(doi, tag_id)
-                logger.debug(f"Processed tag: {tag_name} for publication {doi}")
-            except Exception as e:
-                logger.error(f"Error adding tag to database: {e}")
-
-        except Exception as e:
-            logger.error(f"Error processing tag for publication {doi}: {e}")
+   
 
     def process_batch(self, works: List[Dict], source: str = 'openalex') -> int:
         """

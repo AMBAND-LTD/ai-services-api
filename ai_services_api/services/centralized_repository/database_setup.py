@@ -1,19 +1,15 @@
-"""
-Database initialization and management module.
-Handles creation and maintenance of database schema, tables, and indexes.
-"""
 import os
+import logging
+from contextlib import contextmanager
+from urllib.parse import urlparse
+import psycopg2
+from psycopg2 import sql
 import logging
 import json
 import secrets
 import string
-from typing import List, Dict, Any, Optional
-from contextlib import contextmanager
-from urllib.parse import urlparse
-
-import psycopg2
-from psycopg2 import sql
 import pandas as pd
+from typing import List, Dict, Any, Optional
 
 # Configure logging
 logging.basicConfig(
@@ -23,70 +19,79 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class DatabaseConfig:
-    """Database configuration management."""
-    
-    @staticmethod
-    def get_connection_params() -> Dict[str, str]:
-        """Get database connection parameters from environment variables."""
-        database_url = os.getenv('DATABASE_URL')
-        if database_url:
-            parsed_url = urlparse(database_url)
-            return {
-                'host': parsed_url.hostname,
-                'port': parsed_url.port,
-                'dbname': parsed_url.path[1:],
-                'user': parsed_url.username,
-                'password': parsed_url.password
-            }
-        
-        in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
+def get_db_connection_params():
+    """Get database connection parameters from environment variables."""
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        parsed_url = urlparse(database_url)
         return {
-            'host': '167.86.85.127' if in_docker else 'localhost',
-            'port': '5432',
-            'dbname': os.getenv('POSTGRES_DB', 'aphrc'),
-            'user': os.getenv('POSTGRES_USER', 'postgres'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')
+            'host': parsed_url.hostname,
+            'port': parsed_url.port,
+            'dbname': parsed_url.path[1:],
+            'user': parsed_url.username,
+            'password': parsed_url.password
         }
-
-class DatabaseConnection:
-    """Database connection management."""
     
-    @staticmethod
-    @contextmanager
-    def get_connection(dbname: Optional[str] = None):
-        """Get database connection with optional database name override."""
-        params = DatabaseConfig.get_connection_params()
-        if dbname:
-            params['dbname'] = dbname
-            
+    in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
+    return {
+        'host': '167.86.85.127' if in_docker else 'localhost',
+        'port': '5432',
+        'dbname': os.getenv('POSTGRES_DB', 'aphrc'),
+        'user': os.getenv('POSTGRES_USER', 'postgres'),
+        'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')
+    }
+
+@contextmanager
+def get_db_connection(dbname=None):
+    """
+    Get database connection with proper error handling and connection cleanup.
+    
+    Args:
+        dbname (str, optional): Override default database name if needed
+        
+    Yields:
+        psycopg2.extensions.connection: Database connection object
+    """
+    params = get_db_connection_params()
+    if dbname:
+        params['dbname'] = dbname
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**params)
+        logger.info(f"Connected to database: {params['dbname']} at {params['host']}")
+        yield conn
+    except psycopg2.OperationalError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+            logger.info("Database connection closed")
+
+@contextmanager
+def get_db_cursor(autocommit=False):
+    """
+    Get database cursor with transaction management.
+    
+    Args:
+        autocommit (bool): Whether to enable autocommit mode
+        
+    Yields:
+        tuple: (cursor, connection) tuple for database operations
+    """
+    with get_db_connection() as conn:
+        conn.autocommit = autocommit
+        cur = conn.cursor()
         try:
-            conn = psycopg2.connect(**params)
-            logger.info(f"Connected to database: {params['dbname']} at {params['host']}")
-            yield conn
-        except psycopg2.OperationalError as e:
-            logger.error(f"Database connection error: {e}")
+            yield cur, conn
+        except Exception as e:
+            if not autocommit:
+                conn.rollback()
+                logger.error(f"Transaction rolled back due to error: {e}")
             raise
         finally:
-            if 'conn' in locals():
-                conn.close()
-
-    @staticmethod
-    @contextmanager
-    def get_cursor(autocommit: bool = False):
-        """Get database cursor with transaction management."""
-        with DatabaseConnection.get_connection() as conn:
-            conn.autocommit = autocommit
-            cur = conn.cursor()
-            try:
-                yield cur, conn
-            except Exception as e:
-                if not autocommit:
-                    conn.rollback()
-                raise
-            finally:
-                cur.close()
-
+            cur.close()
 class SchemaManager:
     """Database schema management."""
     
@@ -128,7 +133,6 @@ class SchemaManager:
                         domains TEXT[],
                         fields TEXT[],
                         subfields TEXT[],
-                        password VARCHAR(255),
                         is_superuser BOOLEAN DEFAULT FALSE,
                         is_staff BOOLEAN DEFAULT FALSE,
                         is_active BOOLEAN DEFAULT TRUE,
@@ -342,17 +346,17 @@ class DatabaseInitializer:
     
     def create_database(self):
         """Create the database if it doesn't exist."""
-        params = DatabaseConfig.get_connection_params()
+        params = get_db_connection_params()
         target_dbname = params['dbname']
         
         try:
             # Try connecting to target database first
-            with DatabaseConnection.get_connection():
+            with get_db_connection():
                 logger.info(f"Database {target_dbname} already exists")
                 return
         except psycopg2.OperationalError:
             # Create database if connection failed
-            with DatabaseConnection.get_connection('postgres') as conn:
+            with get_db_connection('postgres') as conn:
                 conn.autocommit = True
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (target_dbname,))
@@ -364,7 +368,7 @@ class DatabaseInitializer:
     
     def initialize_schema(self):
         """Initialize the complete database schema."""
-        with DatabaseConnection.get_cursor(autocommit=True) as (cur, _):
+        with get_db_cursor(autocommit=True) as (cur, _):
             # Create extensions
             cur.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
             
@@ -407,55 +411,115 @@ class DatabaseInitializer:
 class ExpertManager:
     """Handle expert-related database operations."""
     def load_experts_from_csv(self, csv_path: str):
-        """Load expert data from CSV file."""
-        with DatabaseConnection.get_cursor() as (cur, conn):
+        """
+        Load expert data from CSV file with comprehensive error handling.
+        
+        Args:
+            csv_path (str): Path to the CSV file containing expert data
+        
+        Returns:
+            int: Number of successfully processed experts
+        
+        Raises:
+            FileNotFoundError: If the CSV file does not exist
+            ValueError: If there are critical issues with the CSV
+        """
+        # Validate file existence
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"Expert CSV file not found: {csv_path}")
+        
+        # Read CSV with robust parsing
+        try:
+            df = pd.read_csv(csv_path, 
+                            dtype=str,  # Read all columns as strings
+                            keep_default_na=False)  # Prevent NaN conversion
+        except Exception as e:
+            raise ValueError(f"Error reading CSV file: {e}")
+        
+        # Check if DataFrame is empty
+        if df.empty:
+            logger.warning(f"CSV file is empty: {csv_path}")
+            return 0
+        
+        # Validate required columns
+        required_columns = ['First_name', 'Last_name']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns in CSV: {', '.join(missing_columns)}")
+        
+        # Prepare tracking variables
+        total_experts = len(df)
+        processed_experts = 0
+        failed_experts = 0
+        
+        with get_db_cursor() as (cur, conn):
             try:
-                df = pd.read_csv(csv_path)
-                for _, row in df.iterrows():
-                    self._process_expert_row(cur, row)
-                conn.commit()
-                logger.info(f"Successfully loaded experts from {csv_path}")
+                # Process experts in a single transaction
+                for idx, row in df.iterrows():
+                    try:
+                        # Process individual expert row
+                        expert_id = self._process_expert_row(cur, row)
+                        if expert_id:
+                            processed_experts += 1
+                    except Exception as e:
+                        failed_experts += 1
+                        logger.warning(f"Failed to process expert at row {idx}: {e}")
+                        # Continue processing other experts even if one fails
+                
+                # Commit transaction if any experts were processed
+                if processed_experts > 0:
+                    conn.commit()
+                
+                # Log comprehensive summary
+                logger.info(
+                    f"Expert CSV Processing Summary:\n"
+                    f"  Total experts in CSV:   {total_experts}\n"
+                    f"  Successfully processed: {processed_experts}\n"
+                    f"  Failed to process:      {failed_experts}"
+                )
+                
+                return processed_experts
+            
             except Exception as e:
+                # Rollback in case of any unexpected errors
                 conn.rollback()
-                logger.error(f"Error loading experts from CSV: {e}")
+                logger.error(f"Transaction failed during expert loading: {e}")
                 raise
 
     def _process_expert_row(self, cur, row):
         """Process a single expert row from CSV."""
-        # Extract expert data with robust fallbacks
-        first_name = row.get('First_name', row.get('first_name', 'Unknown'))
-        last_name = row.get('Last_name', row.get('last_name', 'Unknown'))
+        # Extract expert data with careful processing
+        first_name = row.get('First_name', '').strip()
+        last_name = row.get('Last_name', '').strip()
         
-        # Extract optional fields with default empty values
-        designation = row.get('Designation', '')
-        theme = row.get('Theme', '')
-        unit = row.get('Unit', '')
-        contact_details = row.get('Contact Details', '')
-        email = row.get('Email', '')
-        orcid = row.get('ORCID', '')
+        # Skip processing if critical data is missing
+        if not first_name or not last_name:
+            logger.warning(f"Skipping expert row due to missing first or last name")
+            return None
         
-        # Process expertise
+        # Extract fields with fallback to empty string
+        designation = row.get('Designation', '').strip()
+        theme = row.get('Theme', '').strip()
+        unit = row.get('Unit', '').strip()
+        contact_details = row.get('Contact Details', '').strip()
+        
+        # Process expertise with careful handling
         expertise_str = row.get('Knowledge and Expertise', '')
         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
         
-        # Process domains and fields
-        domains = row.get('Domains', [])
-        fields = row.get('Fields', [])
-        subfields = row.get('Subfields', [])
-        
-        # Convert to lists if they're not already
-        domains = domains if isinstance(domains, list) else [domains] if domains else []
-        fields = fields if isinstance(fields, list) else [fields] if fields else []
-        subfields = subfields if isinstance(subfields, list) else [subfields] if subfields else []
-        
         try:
-            # Insert expert with comprehensive data
+            # Attempt to insert or update expert
+            # Use contact details as email, with fallback
+            email = contact_details if contact_details and '@' in contact_details else None
+            
             cur.execute("""
                 INSERT INTO experts_expert (
                     first_name, last_name, designation, theme, unit, 
-                    contact_details, knowledge_expertise, email, orcid,
-                    domains, fields, subfields, password
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    contact_details, knowledge_expertise, email,
+                    domains, fields, subfields, 
+                    created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (email) DO UPDATE SET
                     first_name = EXCLUDED.first_name,
                     last_name = EXCLUDED.last_name,
@@ -464,26 +528,28 @@ class ExpertManager:
                     unit = EXCLUDED.unit,
                     contact_details = EXCLUDED.contact_details,
                     knowledge_expertise = EXCLUDED.knowledge_expertise,
-                    domains = EXCLUDED.domains,
-                    fields = EXCLUDED.fields,
-                    subfields = EXCLUDED.subfields
+                    updated_at = CURRENT_TIMESTAMP
                 RETURNING id
             """, (
                 first_name, last_name, designation, theme, unit,
                 contact_details, 
                 json.dumps(expertise_list) if expertise_list else None,
-                email, orcid,
-                domains, fields, subfields,
-                self.generate_password()  # Generate a random password
+                email,
+                None,  # domains
+                None,  # fields
+                None,  # subfields
             ))
             
             expert_id = cur.fetchone()[0]
-            logger.info(f"Processed expert: {first_name} {last_name} (ID: {expert_id})")
+            logger.info(f"Processed expert: {first_name} {last_name} (Designation: {designation}, Email: {email})")
             return expert_id
         
         except Exception as e:
             logger.error(f"Error processing expert {first_name} {last_name}: {e}")
+            # Decide whether to re-raise or continue
             raise
+
+
 
 def main():
     """Main entry point for database initialization."""
