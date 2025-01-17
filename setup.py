@@ -127,9 +127,6 @@ class SystemInitializer:
         publication_processor = PublicationProcessor(openalex_processor.db, TextSummarizer())
 
         try:
-            # Process expert data first
-            logger.info("Loading initial expert data...")
-            await openalex_processor.load_initial_experts(self.config.expertise_csv)
             
             if not self.config.skip_openalex:
                 logger.info("Updating experts with OpenAlex data...")

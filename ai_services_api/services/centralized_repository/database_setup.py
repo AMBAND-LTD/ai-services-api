@@ -487,7 +487,16 @@ class ExpertManager:
                 raise
 
     def _process_expert_row(self, cur, row):
-        """Process a single expert row from CSV."""
+        """
+        Process a single expert row from CSV.
+        
+        Args:
+            cur: Database cursor
+            row: Pandas Series containing expert data
+            
+        Returns:
+            int: Expert ID if successful, None if skipped
+        """
         # Extract expert data with careful processing
         first_name = row.get('First_name', '').strip()
         last_name = row.get('Last_name', '').strip()
@@ -508,45 +517,74 @@ class ExpertManager:
         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
         
         try:
-            # Attempt to insert or update expert
-            # Use contact details as email, with fallback
+            # First check if expert already exists
             email = contact_details if contact_details and '@' in contact_details else None
             
-            cur.execute("""
-                INSERT INTO experts_expert (
-                    first_name, last_name, designation, theme, unit, 
-                    contact_details, knowledge_expertise, email,
-                    domains, fields, subfields, 
-                    created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT (email) DO UPDATE SET
-                    first_name = EXCLUDED.first_name,
-                    last_name = EXCLUDED.last_name,
-                    designation = EXCLUDED.designation,
-                    theme = EXCLUDED.theme,
-                    unit = EXCLUDED.unit,
-                    contact_details = EXCLUDED.contact_details,
-                    knowledge_expertise = EXCLUDED.knowledge_expertise,
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING id
-            """, (
-                first_name, last_name, designation, theme, unit,
-                contact_details, 
-                json.dumps(expertise_list) if expertise_list else None,
-                email,
-                None,  # domains
-                None,  # fields
-                None,  # subfields
-            ))
+            if email:
+                cur.execute(
+                    "SELECT id FROM experts_expert WHERE email = %s OR contact_details = %s",
+                    (email, contact_details)
+                )
+                existing_expert = cur.fetchone()
+                
+                if existing_expert:
+                    # Update existing expert
+                    cur.execute("""
+                        UPDATE experts_expert SET
+                            first_name = %s,
+                            last_name = %s,
+                            designation = %s,
+                            theme = %s,
+                            unit = %s,
+                            contact_details = %s,
+                            knowledge_expertise = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        RETURNING id
+                    """, (
+                        first_name, last_name, designation, theme, unit,
+                        contact_details,
+                        json.dumps(expertise_list) if expertise_list else None,
+                        existing_expert[0]
+                    ))
+                else:
+                    # Insert new expert
+                    cur.execute("""
+                        INSERT INTO experts_expert (
+                            first_name, last_name, designation, theme, unit,
+                            contact_details, knowledge_expertise, email,
+                            created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        RETURNING id
+                    """, (
+                        first_name, last_name, designation, theme, unit,
+                        contact_details,
+                        json.dumps(expertise_list) if expertise_list else None,
+                        email
+                    ))
+            else:
+                # Insert new expert without email
+                cur.execute("""
+                    INSERT INTO experts_expert (
+                        first_name, last_name, designation, theme, unit,
+                        contact_details, knowledge_expertise,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id
+                """, (
+                    first_name, last_name, designation, theme, unit,
+                    contact_details,
+                    json.dumps(expertise_list) if expertise_list else None
+                ))
             
             expert_id = cur.fetchone()[0]
-            logger.info(f"Processed expert: {first_name} {last_name} (Designation: {designation}, Email: {email})")
+            logger.info(f"Processed expert: {first_name} {last_name} (ID: {expert_id})")
             return expert_id
-        
+            
         except Exception as e:
             logger.error(f"Error processing expert {first_name} {last_name}: {e}")
-            # Decide whether to re-raise or continue
             raise
 
 
