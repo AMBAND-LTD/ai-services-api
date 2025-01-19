@@ -148,14 +148,19 @@ class SchemaManager:
             },
             'analytics_tables': {
                 'search_sessions': """
+                    -- Create sequence for session_id
+                    CREATE SEQUENCE IF NOT EXISTS search_session_id_seq;
+                    
+                    -- Create search_sessions table
                     CREATE TABLE IF NOT EXISTS search_sessions (
                         id SERIAL PRIMARY KEY,
-                        session_id VARCHAR(255) UNIQUE NOT NULL,
+                        session_id INTEGER NOT NULL DEFAULT nextval('search_session_id_seq'),
                         user_id VARCHAR(255) NOT NULL,
-                        start_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                        end_time TIMESTAMP WITH TIME ZONE,
-                        successful BOOLEAN DEFAULT FALSE,
-                        sentiment_score FLOAT
+                        start_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        end_timestamp TIMESTAMP WITH TIME ZONE,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        query_count INTEGER DEFAULT 0,
+                        successful_searches INTEGER DEFAULT 0
                     )
                 """,
                 'search_analytics': """
@@ -272,6 +277,7 @@ class SchemaManager:
             "CREATE INDEX IF NOT EXISTS idx_search_analytics_user ON search_analytics(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_search_analytics_timestamp ON search_analytics(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_expert_search_matches_search_id ON expert_search_matches(search_id)",
+            "CREATE INDEX IF NOT EXISTS idx_search_sessions_session_id ON search_sessions(session_id)",
             
             # Interaction indexes
             "CREATE INDEX IF NOT EXISTS idx_expert_interactions_sender ON expert_interactions(sender_id)",

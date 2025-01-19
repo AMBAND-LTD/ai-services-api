@@ -57,34 +57,12 @@ async def process_expert_search(
     user_id: str,
     active_only: bool = True
 ) -> SearchResponse:
-    """Common expert search processing logic"""
-    db = DatabaseManager()
+    """Simplified expert search processing logic without analytics"""
     try:
-        start_time = datetime.now()
         search_manager = ExpertSearchIndexManager()
-        
-        # Start search session
-        session_id = db.start_search_session(user_id)
         
         # Perform search
         results = search_manager.search_experts(query, k=5, active_only=active_only)
-        
-        # Record analytics
-        search_id = db.record_search_analytics(
-            query=query,
-            user_id=user_id,
-            response_time=(datetime.now() - start_time).total_seconds(),
-            result_count=len(results),
-            search_type='expert_search'
-        )
-        
-        # Record expert matches
-        for idx, result in enumerate(results):
-            db.record_expert_search(
-                search_id=search_id,
-                expert_id=result['id'],
-                rank_position=idx + 1
-            )
         
         formatted_results = [
             ExpertSearchResult(
@@ -104,8 +82,6 @@ async def process_expert_search(
         # Update ML predictor
         ml_predictor.update(query, user_id=user_id)
         
-        db.update_search_session(session_id, successful=len(results) > 0)
-        
         return SearchResponse(
             total_results=len(formatted_results),
             experts=formatted_results,
@@ -118,28 +94,16 @@ async def process_expert_search(
             status_code=500,
             detail="Internal server error while searching experts"
         )
-    finally:
-        db.close()
 
 async def process_query_prediction(
     partial_query: str,
     user_id: str
 ) -> PredictionResponse:
-    """Common query prediction processing logic"""
-    db = DatabaseManager()
+    """Simplified query prediction processing logic without analytics"""
     try:
-        # Get predictions from ML model first
+        # Get predictions from ML model
         predictions = ml_predictor.predict(partial_query, user_id=user_id)
         confidence_scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
-        
-        # Record each prediction with its confidence score
-        for predicted_query, confidence in zip(predictions, confidence_scores):
-            db.record_query_prediction(
-                partial_query=partial_query,
-                predicted_query=predicted_query,  # This was missing before
-                confidence_score=confidence,
-                user_id=user_id
-            )
         
         return PredictionResponse(
             predictions=predictions,
@@ -150,8 +114,6 @@ async def process_query_prediction(
     except Exception as e:
         logger.error(f"Error predicting queries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 # Test endpoints
 @router.get("/test/experts/search/{query}")
 async def test_search_experts(

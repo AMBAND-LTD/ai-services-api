@@ -12,11 +12,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class DatabaseManager:
     def __init__(self):
         """Initialize database connection."""
-        self.conn = get_db_connection()
+        connection_ctx = get_db_connection()
+        self.conn = connection_ctx.__enter__()
         self._cursor = None
+        self._connection_ctx = connection_ctx
 
     def get_cursor(self):
         """Get a database cursor with DictCursor factory."""
@@ -36,6 +39,68 @@ class DatabaseManager:
         except Exception as e:
             self.conn.rollback()
             logger.error(f"Query execution failed: {str(e)}\nQuery: {query}\nParams: {params}")
+            raise
+
+    def start_search_session(self, user_id: str) -> int:
+        """Start a new search session and return session_id."""
+        try:
+            result = self.execute("""
+                INSERT INTO search_sessions 
+                (user_id, start_timestamp, query_count, successful_searches, is_active)
+                VALUES (%s, NOW(), 0, 0, TRUE)
+                RETURNING session_id
+            """, (user_id,))
+            
+            if result and result[0]:
+                return result[0][0]
+            raise Exception("Failed to create search session")
+        except Exception as e:
+            logger.error(f"Error starting search session: {e}")
+            raise
+
+    def update_search_session(self, session_id: int, successful: bool = True) -> None:
+        """Update search session metrics."""
+        try:
+            self.execute("""
+                UPDATE search_sessions 
+                SET 
+                    query_count = query_count + 1,
+                    successful_searches = successful_searches + %s,
+                    end_timestamp = NOW()
+                WHERE session_id = %s
+            """, (1 if successful else 0, session_id))
+        except Exception as e:
+            logger.error(f"Error updating search session: {e}")
+            raise
+
+    def end_search_session(self, session_id: int) -> None:
+        """End a search session."""
+        try:
+            self.execute("""
+                UPDATE search_sessions 
+                SET 
+                    is_active = FALSE,
+                    end_timestamp = NOW()
+                WHERE session_id = %s
+            """, (session_id,))
+        except Exception as e:
+            logger.error(f"Error ending search session: {e}")
+            raise
+
+    def get_active_session(self, user_id: str) -> Optional[int]:
+        """Get the active session ID for a user if it exists."""
+        try:
+            result = self.execute("""
+                SELECT session_id
+                FROM search_sessions
+                WHERE user_id = %s AND is_active = TRUE
+                ORDER BY start_timestamp DESC
+                LIMIT 1
+            """, (user_id,))
+            
+            return result[0][0] if result else None
+        except Exception as e:
+            logger.error(f"Error getting active session: {e}")
             raise
 
     def add_expert(self, first_name: str, last_name: str, 
@@ -300,31 +365,81 @@ class DatabaseManager:
             raise
     
     def record_search_analytics(self, query: str, user_id: str, response_time: float, 
-                              result_count: int, search_type: str = 'general', 
-                              filters: dict = None) -> int:
+                            result_count: int, search_type: str = 'general', 
+                            filters: dict = None) -> int:
         """Record search analytics and return search_id."""
         try:
-            interval_str = f"{response_time} seconds"
-            
             result = self.execute("""
-                INSERT INTO search_logs 
-                (query, user_id, response_time, result_count, search_type, 
-                success_rate, filters)
-                VALUES (%s, %s, %s::interval, %s, %s, %s, %s)
+                INSERT INTO search_analytics 
+                (query, user_id, response_time, result_count, search_type)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 query, 
                 user_id,
-                interval_str,
+                response_time,  # No need for interval conversion
                 result_count,
-                search_type,
-                1.0 if result_count > 0 else 0.0,
-                filters
+                search_type
             ))
             
             return result[0][0]
         except Exception as e:
             logger.error(f"Error recording search analytics: {e}")
+            raise
+
+    def get_search_metrics(self, start_date: str, end_date: str, 
+                          search_type: List[str] = None) -> Dict:
+        """Get search metrics for a date range."""
+        try:
+            query = """
+            SELECT 
+                COUNT(*) as total_searches,
+                COUNT(DISTINCT user_id) as unique_users,
+                AVG(response_time) as avg_response_time,
+                COUNT(CASE WHEN result_count > 0 THEN 1 END)::FLOAT / 
+                    COUNT(*) as success_rate
+            FROM search_analytics
+            WHERE timestamp BETWEEN %s AND %s
+            """
+            
+            if search_type:
+                query += " AND search_type = ANY(%s)"
+                result = self.execute(query, (start_date, end_date, search_type))
+            else:
+                result = self.execute(query, (start_date, end_date))
+                
+            return {
+                'total_searches': result[0][0],
+                'unique_users': result[0][1],
+                'avg_response_time': result[0][2],
+                'success_rate': result[0][3]
+            }
+        except Exception as e:
+            logger.error(f"Error getting search metrics: {e}")
+            raise
+
+    def get_performance_metrics(self, hours: int = 24) -> Dict:
+        """Get system performance metrics."""
+        try:
+            result = self.execute("""
+                SELECT 
+                    AVG(response_time) as avg_response_time,
+                    COUNT(*) as total_queries,
+                    COUNT(DISTINCT user_id) as unique_users,
+                    COUNT(CASE WHEN result_count = 0 THEN 1 END)::FLOAT / 
+                        COUNT(*) as error_rate
+                FROM search_analytics
+                WHERE timestamp > NOW() - INTERVAL '%s hours'
+            """, (hours,))
+            
+            return {
+                'avg_response_time': result[0][0],
+                'total_queries': result[0][1],
+                'unique_users': result[0][2],
+                'error_rate': result[0][3]
+            }
+        except Exception as e:
+            logger.error(f"Error getting performance metrics: {e}")
             raise
 
     def record_expert_search(self, search_id: int, expert_id: str, 
@@ -402,38 +517,7 @@ class DatabaseManager:
             logger.error(f"Error recording click: {e}")
             raise
 
-    def get_search_metrics(self, start_date: str, end_date: str, 
-                          search_type: List[str] = None) -> Dict:
-        """Get search metrics for a date range."""
-        try:
-            query = """
-            SELECT 
-                COUNT(*) as total_searches,
-                COUNT(DISTINCT user_id) as unique_users,
-                AVG(EXTRACT(EPOCH FROM response_time)) as avg_response_time,
-                SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / 
-                    COUNT(*) as click_through_rate,
-                AVG(success_rate) as avg_success_rate
-            FROM search_logs
-            WHERE timestamp BETWEEN %s AND %s
-            """
-            
-            if search_type:
-                query += " AND search_type = ANY(%s)"
-                result = self.execute(query, (start_date, end_date, search_type))
-            else:
-                result = self.execute(query, (start_date, end_date))
-                
-            return {
-                'total_searches': result[0][0],
-                'unique_users': result[0][1],
-                'avg_response_time': result[0][2],
-                'click_through_rate': result[0][3],
-                'avg_success_rate': result[0][4]
-            }
-        except Exception as e:
-            logger.error(f"Error getting search metrics: {e}")
-            raise
+    
 
     def get_expert_metrics(self, expert_id: str = None) -> Dict:
         """Get expert search metrics."""
@@ -468,38 +552,27 @@ class DatabaseManager:
             logger.error(f"Error getting expert metrics: {e}")
             raise
 
-    def get_performance_metrics(self, hours: int = 24) -> Dict:
-        """Get system performance metrics."""
-        try:
-            result = self.execute("""
-                SELECT 
-                    EXTRACT(epoch FROM AVG(response_time)) as avg_response_time,
-                    COUNT(*) as total_queries,
-                    COUNT(DISTINCT user_id) as unique_users,
-                    SUM(CASE WHEN success_rate = 0 THEN 1 ELSE 0 END)::FLOAT / 
-                        COUNT(*) as error_rate
-                FROM search_logs
-                WHERE timestamp > NOW() - INTERVAL '%s hours'
-            """, (hours,))
-            
-            return {
-                'avg_response_time': result[0][0],
-                'total_queries': result[0][1],
-                'unique_users': result[0][2],
-                'error_rate': result[0][3]
-            }
-        except Exception as e:
-            logger.error(f"Error getting performance metrics: {e}")
-            raise
+    
+
 
     def close(self):
         """Close database connection and cursor."""
-        if hasattr(self, '_cursor') and self._cursor:
-            self._cursor.close()
-        if hasattr(self, 'conn') and self.conn:
-            self.conn.close()
-            logger.info("Database connection closed")
+        try:
+            if hasattr(self, '_cursor') and self._cursor and not getattr(self._cursor, 'closed', True):
+                self._cursor.close()
+                self._cursor = None
+                
+            if hasattr(self, 'conn') and self.conn:
+                if hasattr(self, '_connection_ctx') and self._connection_ctx:
+                    self._connection_ctx.__exit__(None, None, None)
+                    self._connection_ctx = None
+                self.conn = None
+                logger.info("Database connection closed")
+        except Exception as e:
+            logger.error(f"Error during database cleanup: {e}")
 
-    def __del__(self):
-        """Destructor to ensure connection is closed."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
