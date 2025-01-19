@@ -21,7 +21,7 @@ from ai_services_api.services.centralized_repository.orcid.orcid_processor impor
 from ai_services_api.services.centralized_repository.knowhub.knowhub_scraper import KnowhubScraper
 from ai_services_api.services.centralized_repository.website.website_scraper import WebsiteScraper
 from ai_services_api.services.centralized_repository.nexus.researchnexus_scraper import ResearchNexusScraper
-
+from ai_services_api.services.centralized_repository.database_setup import DatabaseInitializer, ExpertManager
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -71,7 +71,7 @@ class SystemInitializer:
             'ORCID_CLIENT_ID',
             'ORCID_CLIENT_SECRET',
             'KNOWHUB_BASE_URL',
-            'EXPERTISE_CSV'  # Add this to ensure the CSV path is checked
+            'EXPERTISE_CSV'
         ]
 
     def verify_environment(self) -> None:
@@ -80,6 +80,34 @@ class SystemInitializer:
         missing_vars = [var for var in self.required_env_vars if not os.getenv(var)]
         if missing_vars:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+    def _fetch_experts_data(self):
+        """Fetch experts data from PostgreSQL"""
+        from ai_services_api.services.centralized_repository.database_setup import get_db_cursor
+        
+        try:
+            with get_db_cursor() as (cur, conn):
+                cur.execute("""
+                    SELECT 
+                        id,
+                        first_name, 
+                        last_name,
+                        knowledge_expertise,
+                        designation,
+                        theme,
+                        unit,
+                        orcid,
+                        is_active
+                    FROM experts_expert
+                    WHERE id IS NOT NULL
+                """)
+                
+                experts_data = cur.fetchall()
+                logger.info(f"Fetched {len(experts_data)} experts from database")
+                return experts_data
+        except Exception as e:
+            logger.error(f"Error fetching experts data: {e}")
+            return []
 
     async def initialize_database(self) -> None:
         """Initialize database and create tables using DatabaseInitializer"""
@@ -92,8 +120,8 @@ class SystemInitializer:
         except Exception as e:
             logger.error(f"Database initialization failed: {e}")
             raise
-    
-    def load_initial_experts(self) -> None:
+
+    async def load_initial_experts(self) -> None:
         """Load initial experts from CSV if provided"""
         try:
             csv_path = 'experts.csv'
@@ -108,13 +136,19 @@ class SystemInitializer:
         except Exception as e:
             logger.error(f"Error loading initial experts: {e}")
             raise
-    
-    def initialize_graph(self) -> bool:
-        """Initialize Neo4j graph database"""
+
+    async def initialize_graph(self) -> bool:
+        """Initialize the graph with experts and their relationships"""
         try:
+            # Import GraphDatabaseInitializer here to avoid circular import
+            from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
+            
+            # Create an instance of GraphDatabaseInitializer
             graph_initializer = GraphDatabaseInitializer()
-            logger.info("Initializing graph database...")
-            graph_initializer.initialize_graph()
+            
+            # Use the async method from GraphDatabaseInitializer
+            await graph_initializer.initialize_graph()
+            
             logger.info("Graph initialization complete!")
             return True
         except Exception as e:
@@ -282,7 +316,7 @@ class SystemInitializer:
         finally:
             openalex_processor.close()
 
-    def create_search_index(self) -> bool:
+    async def create_search_index(self) -> bool:
         """Create the FAISS search index."""
         index_creator = ExpertSearchIndexManager()
         try:
@@ -295,8 +329,7 @@ class SystemInitializer:
             logger.error(f"FAISS search index creation failed: {e}")
             return False
 
-
-    def create_redis_index(self) -> bool:
+    async def create_redis_index(self) -> bool:
         """Create the Redis search index."""
         try:
             if not self.config.skip_redis:
@@ -310,7 +343,6 @@ class SystemInitializer:
             logger.error(f"Redis search index creation failed: {e}")
             return False
 
-
     async def initialize_system(self) -> None:
         """Main initialization flow"""
         try:
@@ -318,22 +350,21 @@ class SystemInitializer:
             
             if not self.config.skip_database:
                 await self.initialize_database()
-                
-                # Load initial experts immediately after database initialization
-                self.load_initial_experts()
+                await self.load_initial_experts()
             
             if not self.config.skip_publications:
                 await self.process_publications()
                 
             if not self.config.skip_graph:
-                if not self.initialize_graph():
+                graph_success = await self.initialize_graph()
+                if not graph_success:
                     raise Exception("Graph initialization failed")
                 
-            if not self.create_search_index():
-                    raise Exception("Search index creation failed")
+            if not await self.create_search_index():
+                raise Exception("Search index creation failed")
 
-            if not self.create_redis_index():
-                    raise Exception("Search index creation failed")
+            if not await self.create_redis_index():
+                raise Exception("Redis index creation failed")
                 
             logger.info("System initialization completed successfully!")
             
@@ -374,6 +405,8 @@ async def main() -> None:
 def run() -> None:
     """Entry point function"""
     try:
+        if os.name == 'nt':  # Windows
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Process interrupted by user")
@@ -383,5 +416,4 @@ def run() -> None:
         sys.exit(1)
 
 if __name__ == "__main__":
-    import sys
     run()
