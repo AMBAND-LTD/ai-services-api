@@ -52,17 +52,58 @@ async def get_test_user_id(request: Request) -> str:
         user_id = "test_user_123"
     return user_id
 
-async def process_expert_search(
-    query: str,
-    user_id: str,
-    active_only: bool = True
-) -> SearchResponse:
-    """Simplified expert search processing logic without analytics"""
+
+async def record_search(user_id: str, query: str, results: List[Dict], response_time: float):
+    conn = None
     try:
-        search_manager = ExpertSearchIndexManager()
+        conn = get_db_connection()
+        cur = conn.cursor()
         
-        # Perform search
+        cur.execute("""
+            INSERT INTO expert_searches
+                (user_id, query, results_count, response_time, timestamp)
+            VALUES
+                (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            RETURNING id
+        """, (user_id, query, len(results), response_time))
+        
+        search_id = cur.fetchone()[0]
+        conn.commit()
+        return search_id
+    except Exception as e:
+        logger.error(f"Error recording search: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+async def record_prediction(user_id: str, partial_query: str, predictions: List[str], confidence_scores: List[float]):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        for pred, conf in zip(predictions, confidence_scores):
+            cur.execute("""
+                INSERT INTO query_predictions
+                    (partial_query, predicted_query, confidence_score, user_id, timestamp)
+                VALUES 
+                    (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            """, (partial_query, pred, conf, user_id))
+        
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error recording prediction: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+async def process_expert_search(query: str, user_id: str, active_only: bool = True) -> SearchResponse:
+    try:
+        start_time = datetime.utcnow()
+        search_manager = ExpertSearchIndexManager()
         results = search_manager.search_experts(query, k=5, active_only=active_only)
+        response_time = (datetime.utcnow() - start_time).total_seconds()
         
         formatted_results = [
             ExpertSearchResult(
@@ -75,11 +116,10 @@ async def process_expert_search(
                 contact=result['contact'],
                 is_active=result['is_active'],
                 score=result.get('score')
-            )
-            for result in results
+            ) for result in results
         ]
         
-        # Update ML predictor
+        await record_search(user_id, query, results, response_time)
         ml_predictor.update(query, user_id=user_id)
         
         return SearchResponse(
@@ -90,20 +130,14 @@ async def process_expert_search(
         
     except Exception as e:
         logger.error(f"Error searching experts: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while searching experts"
-        )
+        raise HTTPException(status_code=500, detail="Internal server error while searching experts")
 
-async def process_query_prediction(
-    partial_query: str,
-    user_id: str
-) -> PredictionResponse:
-    """Simplified query prediction processing logic without analytics"""
+async def process_query_prediction(partial_query: str, user_id: str) -> PredictionResponse:
     try:
-        # Get predictions from ML model
         predictions = ml_predictor.predict(partial_query, user_id=user_id)
         confidence_scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
+        
+        await record_prediction(user_id, partial_query, predictions, confidence_scores)
         
         return PredictionResponse(
             predictions=predictions,
