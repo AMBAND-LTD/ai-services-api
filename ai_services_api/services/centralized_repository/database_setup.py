@@ -92,6 +92,7 @@ def get_db_cursor(autocommit=False):
             raise
         finally:
             cur.close()
+
 class SchemaManager:
     """Database schema management."""
     
@@ -110,7 +111,7 @@ class SchemaManager:
                         id SERIAL PRIMARY KEY,
                         title TEXT NOT NULL,
                         doi VARCHAR(255) UNIQUE,
-                        authors TEXT[],
+                        authors JSON,
                         domains TEXT[],
                         type VARCHAR(50) DEFAULT 'publication',
                         publication_year INTEGER,
@@ -143,6 +144,19 @@ class SchemaManager:
                         bio TEXT,
                         email VARCHAR(200),
                         middle_name VARCHAR(200)
+                    )
+                """,
+                'expert_resource_links': """
+                    CREATE TABLE IF NOT EXISTS expert_resource_links (
+                        id SERIAL PRIMARY KEY,
+                        expert_id INTEGER NOT NULL,
+                        resource_id INTEGER NOT NULL,
+                        author_position INTEGER,
+                        confidence_score FLOAT,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (expert_id) REFERENCES experts_expert(id) ON DELETE CASCADE,
+                        FOREIGN KEY (resource_id) REFERENCES resources_resource(id) ON DELETE CASCADE,
+                        UNIQUE(expert_id, resource_id)
                     )
                 """
             },
@@ -271,6 +285,8 @@ class SchemaManager:
             # Core table indexes
             "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (first_name, last_name)",
             "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_resource_expert ON expert_resource_links(expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_resource_resource ON expert_resource_links(resource_id)",
             
             # Search and analytics indexes
             "CREATE INDEX IF NOT EXISTS idx_search_sessions_user ON search_sessions(user_id)",
@@ -341,6 +357,22 @@ class SchemaManager:
                     SUM(CASE WHEN successful THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as success_rate
                 FROM expert_matching_logs
                 GROUP BY expert_id
+            """,
+            'expert_publications': """
+                CREATE OR REPLACE VIEW expert_publications AS
+                SELECT 
+                    e.id as expert_id,
+                    e.first_name,
+                    e.last_name,
+                    r.id as resource_id,
+                    r.title,
+                    r.publication_year,
+                    erl.author_position,
+                    erl.confidence_score
+                FROM experts_expert e
+                JOIN expert_resource_links erl ON e.id = erl.expert_id
+                JOIN resources_resource r ON r.id = erl.resource_id
+                ORDER BY e.id, r.publication_year DESC
             """
         }
 
@@ -493,37 +525,23 @@ class ExpertManager:
                 raise
 
     def _process_expert_row(self, cur, row):
-        """
-        Process a single expert row from CSV.
-        
-        Args:
-            cur: Database cursor
-            row: Pandas Series containing expert data
-            
-        Returns:
-            int: Expert ID if successful, None if skipped
-        """
-        # Extract expert data with careful processing
+        """Process a single expert row from CSV."""
         first_name = row.get('First_name', '').strip()
         last_name = row.get('Last_name', '').strip()
         
-        # Skip processing if critical data is missing
         if not first_name or not last_name:
             logger.warning(f"Skipping expert row due to missing first or last name")
             return None
         
-        # Extract fields with fallback to empty string
         designation = row.get('Designation', '').strip()
         theme = row.get('Theme', '').strip()
         unit = row.get('Unit', '').strip()
         contact_details = row.get('Contact Details', '').strip()
         
-        # Process expertise with careful handling
         expertise_str = row.get('Knowledge and Expertise', '')
         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
         
         try:
-            # First check if expert already exists
             email = contact_details if contact_details and '@' in contact_details else None
             
             if email:
@@ -534,7 +552,6 @@ class ExpertManager:
                 existing_expert = cur.fetchone()
                 
                 if existing_expert:
-                    # Update existing expert
                     cur.execute("""
                         UPDATE experts_expert SET
                             first_name = %s,
@@ -554,7 +571,6 @@ class ExpertManager:
                         existing_expert[0]
                     ))
                 else:
-                    # Insert new expert
                     cur.execute("""
                         INSERT INTO experts_expert (
                             first_name, last_name, designation, theme, unit,
@@ -570,7 +586,6 @@ class ExpertManager:
                         email
                     ))
             else:
-                # Insert new expert without email
                 cur.execute("""
                     INSERT INTO experts_expert (
                         first_name, last_name, designation, theme, unit,
@@ -593,7 +608,81 @@ class ExpertManager:
             logger.error(f"Error processing expert {first_name} {last_name}: {e}")
             raise
 
-
+class ExpertResourceLinker:
+    """Handle linking between experts and resources based on author names."""
+    
+    def __init__(self):
+        self.name_cache = {}
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize a name for comparison."""
+        return ' '.join(name.lower().split())
+    
+    def _get_name_parts(self, author_name: str) -> tuple:
+        """Extract first and last name from author string."""
+        parts = author_name.strip().split()
+        if len(parts) == 1:
+            return ('', parts[0])
+        return (' '.join(parts[:-1]), parts[-1])
+    
+    def link_experts_to_resources(self):
+        """Link experts to resources based on author names."""
+        with get_db_cursor() as (cur, conn):
+            try:
+                # Get all experts
+                cur.execute("""
+                    SELECT id, first_name, last_name, middle_name 
+                    FROM experts_expert
+                """)
+                experts = cur.fetchall()
+                
+                # Build expert name lookup
+                expert_lookup = {}
+                for expert_id, first_name, last_name, middle_name in experts:
+                    full_name = self._normalize_name(f"{first_name} {middle_name or ''} {last_name}")
+                    expert_lookup[full_name] = expert_id
+                    # Also store without middle name
+                    simple_name = self._normalize_name(f"{first_name} {last_name}")
+                    expert_lookup[simple_name] = expert_id
+                
+                # Get all resources with authors
+                cur.execute("SELECT id, authors FROM resources_resource WHERE authors IS NOT NULL")
+                resources = cur.fetchall()
+                
+                # Process each resource
+                for resource_id, authors in resources:
+                    if not authors:
+                        continue
+                        
+                    author_list = json.loads(authors) if isinstance(authors, str) else authors
+                    
+                    for position, author in enumerate(author_list, 1):
+                        # Try different name combinations
+                        author_name = self._normalize_name(author)
+                        expert_id = expert_lookup.get(author_name)
+                        
+                        if expert_id:
+                            # Calculate confidence score based on name match quality
+                            confidence_score = 1.0 if ' ' in author_name else 0.8
+                            
+                            # Insert link with upsert
+                            cur.execute("""
+                                INSERT INTO expert_resource_links 
+                                    (expert_id, resource_id, author_position, confidence_score)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (expert_id, resource_id) 
+                                DO UPDATE SET 
+                                    author_position = EXCLUDED.author_position,
+                                    confidence_score = EXCLUDED.confidence_score
+                            """, (expert_id, resource_id, position, confidence_score))
+                
+                conn.commit()
+                logger.info("Successfully linked experts to resources")
+                
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Error linking experts to resources: {e}")
+                raise
 
 def main():
     """Main entry point for database initialization."""
@@ -608,6 +697,10 @@ def main():
         expertise_csv = os.getenv('EXPERTISE_CSV')
         if expertise_csv and os.path.exists(expertise_csv):
             expert_manager.load_experts_from_csv(expertise_csv)
+        
+        # Initialize expert-resource links
+        linker = ExpertResourceLinker()
+        linker.link_experts_to_resources()
             
         logger.info("Database initialization completed successfully")
         
