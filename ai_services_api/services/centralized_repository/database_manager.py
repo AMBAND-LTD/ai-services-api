@@ -164,57 +164,66 @@ class DatabaseManager:
             authors_json = json.dumps(authors) if authors is not None else None
             
             # Update or insert in a single operation
-            update_result = self.execute("""
-                UPDATE resources_resource
-                SET summary = COALESCE(%s, summary),
-                    doi = COALESCE(%s, doi),
-                    type = COALESCE(%s, type),
-                    authors = COALESCE(%s::json, authors),
-                    domains = COALESCE(%s, domains),
-                    publication_year = COALESCE(%s, publication_year)
-                WHERE (doi = %s) OR 
-                    (title = %s AND source = %s)
-                RETURNING id
-            """, (
-                summary, doi, type, authors_json, domains, publication_year,
-                doi, title, source
-            ))
-            
-            # If no existing record, insert new publication
-            if not update_result:
-                self.execute("""
-                    INSERT INTO resources_resource 
-                    (doi, title, summary, source, type, authors, domains, publication_year)
-                    VALUES (%s, %s, %s, %s, %s, %s::json, %s, %s)
-                """, (doi, title, summary, source, type, authors_json, domains, publication_year))
-                logger.info(f"Added new publication: {title}")
+            with get_db_cursor() as (cur, conn):
+                cur.execute("""
+                    UPDATE resources_resource
+                    SET summary = COALESCE(%s, summary),
+                        doi = COALESCE(%s, doi),
+                        type = COALESCE(%s, type),
+                        authors = COALESCE(%s::json, authors),
+                        domains = COALESCE(%s, domains),
+                        publication_year = COALESCE(%s, publication_year)
+                    WHERE (doi = %s) OR 
+                        (title = %s AND source = %s)
+                    RETURNING id
+                """, (
+                    summary, doi, type, authors_json, domains, publication_year,
+                    doi, title, source
+                ))
                 
-                # If authors were provided, trigger the expert-resource linking
-                if authors_json:
-                    self._link_publication_to_experts(cur.fetchone()[0], json.loads(authors_json))
-            else:
-                publication_id = update_result[0]
-                logger.info(f"Updated existing publication: {title}")
+                update_result = cur.fetchone()
                 
-                # Update expert-resource links if authors were modified
-                if authors_json:
-                    self._link_publication_to_experts(publication_id, json.loads(authors_json))
+                if not update_result:
+                    # If no existing record, insert new publication
+                    cur.execute("""
+                        INSERT INTO resources_resource 
+                        (doi, title, summary, source, type, authors, domains, publication_year)
+                        VALUES (%s, %s, %s, %s, %s, %s::json, %s, %s)
+                        RETURNING id
+                    """, (doi, title, summary, source, type, authors_json, domains, publication_year))
+                    
+                    publication_id = cur.fetchone()[0]
+                    logger.info(f"Added new publication: {title}")
+                    
+                    # If authors were provided, trigger the expert-resource linking
+                    if authors_json:
+                        self._link_publication_to_experts(cur, publication_id, json.loads(authors_json))
+                else:
+                    publication_id = update_result[0]
+                    logger.info(f"Updated existing publication: {title}")
+                    
+                    # Update expert-resource links if authors were modified
+                    if authors_json:
+                        self._link_publication_to_experts(cur, publication_id, json.loads(authors_json))
+                
+                conn.commit()
             
         except Exception as e:
             logger.error(f"Error processing publication '{title}': {e}")
             raise
 
-    def _link_publication_to_experts(self, publication_id: int, authors: List[str]) -> None:
+    def _link_publication_to_experts(self, cur, publication_id: int, authors: List[str]) -> None:
         """
         Link a publication to experts based on author names.
         
         Args:
+            cur: Database cursor
             publication_id (int): ID of the publication
             authors (List[str]): List of author names
         """
         try:
             # First, remove existing links for this publication
-            self.execute("""
+            cur.execute("""
                 DELETE FROM expert_resource_links
                 WHERE resource_id = %s
             """, (publication_id,))
@@ -225,19 +234,21 @@ class DatabaseManager:
                 normalized_name = linker._normalize_name(author)
                 
                 # Find matching expert
-                expert_result = self.execute("""
+                cur.execute("""
                     SELECT id 
                     FROM experts_expert 
                     WHERE LOWER(CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name)) LIKE %s
                     OR LOWER(CONCAT(first_name, ' ', last_name)) LIKE %s
                 """, (f"%{normalized_name}%", f"%{normalized_name}%"))
                 
+                expert_result = cur.fetchone()
+                
                 if expert_result:
                     expert_id = expert_result[0]
                     confidence_score = 1.0 if ' ' in normalized_name else 0.8
                     
                     # Create link
-                    self.execute("""
+                    cur.execute("""
                         INSERT INTO expert_resource_links 
                         (expert_id, resource_id, author_position, confidence_score)
                         VALUES (%s, %s, %s, %s)
@@ -250,7 +261,6 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error linking publication {publication_id} to experts: {e}")
             raise
-
     def update_publication_topics(self, publication_id: str, topics: List[str]) -> None:
         """
         Update the topics of a publication.
