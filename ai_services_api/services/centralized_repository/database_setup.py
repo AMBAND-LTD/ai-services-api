@@ -105,6 +105,61 @@ class SchemaManager:
     def _load_table_definitions() -> Dict[str, Dict[str, str]]:
         """Load SQL definitions for all tables in the system."""
         return {
+            'chat_tables': {
+                'chat_sessions': """
+                    CREATE TABLE IF NOT EXISTS chat_sessions (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL UNIQUE,
+                        user_id VARCHAR(255) NOT NULL,
+                        start_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        end_timestamp TIMESTAMP WITH TIME ZONE,
+                        total_messages INTEGER DEFAULT 0,
+                        successful BOOLEAN DEFAULT TRUE,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    )
+                """,
+                'chat_interactions': """
+                    CREATE TABLE IF NOT EXISTS chat_interactions (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL,
+                        user_id VARCHAR(255) NOT NULL,
+                        query TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        response_time FLOAT,
+                        intent_type VARCHAR(50),
+                        intent_confidence FLOAT,
+                        navigation_matches INTEGER DEFAULT 0,
+                        publication_matches INTEGER DEFAULT 0,
+                        error_occurred BOOLEAN DEFAULT FALSE,
+                        FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
+                    )
+                """,
+                'sentiment_metrics': """
+                    CREATE TABLE IF NOT EXISTS sentiment_metrics (
+                        id SERIAL PRIMARY KEY,
+                        interaction_id INTEGER NOT NULL,
+                        sentiment_score FLOAT,
+                        emotion_labels TEXT[],
+                        satisfaction_score FLOAT,
+                        urgency_score FLOAT,
+                        clarity_score FLOAT,
+                        FOREIGN KEY (interaction_id) REFERENCES chat_interactions(id)
+                    )
+                """,
+                'chat_analytics': """
+                    CREATE TABLE IF NOT EXISTS chat_analytics (
+                        id SERIAL PRIMARY KEY,
+                        interaction_id INTEGER NOT NULL,
+                        content_id VARCHAR(255) NOT NULL,
+                        content_type VARCHAR(50) NOT NULL,
+                        similarity_score FLOAT,
+                        rank_position INTEGER,
+                        clicked BOOLEAN DEFAULT FALSE,
+                        FOREIGN KEY (interaction_id) REFERENCES chat_interactions(id)
+                    )
+                """
+            },
             'core_tables': {
                 'resources_resource': """
                     CREATE TABLE IF NOT EXISTS resources_resource (
@@ -186,7 +241,9 @@ class SchemaManager:
                         response_time FLOAT,
                         result_count INTEGER,
                         search_type VARCHAR(50),
-                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (search_id) REFERENCES search_sessions(id)
+
                     )
                 """,
                 'expert_search_matches': """
@@ -195,7 +252,10 @@ class SchemaManager:
                         search_id INTEGER NOT NULL,
                         expert_id VARCHAR(255) NOT NULL,
                         rank_position INTEGER,
-                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        similarity_score FLOAT,
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (search_id) REFERENCES search_sessions(id)
+
                     )
                 """
             },
@@ -258,6 +318,8 @@ class SchemaManager:
                     CREATE TABLE IF NOT EXISTS domain_expertise_analytics (
                         domain_name VARCHAR(255) PRIMARY KEY,
                         match_count INTEGER DEFAULT 0,
+                        total_clicks INTEGER DEFAULT 0,
+                        avg_similarity_score FLOAT DEFAULT 0.0,
                         last_matched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     )
                 """,
@@ -282,6 +344,25 @@ class SchemaManager:
     def _load_index_definitions() -> List[str]:
         """Load SQL definitions for all indexes."""
         return [
+            # Chat session indexes
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_timestamp ON chat_sessions(start_timestamp)",
+            
+            # Chat interaction indexes
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_session ON chat_interactions(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_user ON chat_interactions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_timestamp ON chat_interactions(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_intent ON chat_interactions(intent_type)",
+            
+            # Sentiment indexes
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_interaction ON sentiment_metrics(interaction_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_score ON sentiment_metrics(sentiment_score)",
+            
+            # Chat analytics indexes
+            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_interaction ON chat_analytics(interaction_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_content ON chat_analytics(content_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_type ON chat_analytics(content_type)",
+            
             # Core table indexes
             "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (first_name, last_name)",
             "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)",
@@ -305,16 +386,60 @@ class SchemaManager:
             # ML and matching indexes
             "CREATE INDEX IF NOT EXISTS idx_expert_matching_logs_expert ON expert_matching_logs(expert_id)",
             "CREATE INDEX IF NOT EXISTS idx_query_predictions_user ON query_predictions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_query_predictions_partial ON query_predictions(partial_query)",
             
             # General interaction indexes
             "CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions(timestamp)"
+            "CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_interactions_session_user ON interactions(session_id, user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_interactions_metrics ON interactions USING GIN (metrics)",
+            
+            # Additional search and expert indexes
+            "CREATE INDEX IF NOT EXISTS idx_search_analytics_query ON search_analytics(query)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_search_matches_expert ON expert_search_matches(expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_matches_search ON expert_search_matches(search_id)",
+            "CREATE INDEX IF NOT EXISTS idx_domain_analytics_count ON domain_expertise_analytics(match_count DESC)"
         ]
-
     @staticmethod
     def _load_view_definitions() -> Dict[str, str]:
         """Load SQL definitions for all views."""
         return {
+            'intent_performance_metrics': """
+                CREATE OR REPLACE VIEW intent_performance_metrics AS
+                SELECT 
+                    intent_type,
+                    COUNT(*) as total_queries,
+                    AVG(intent_confidence) as avg_confidence,
+                    AVG(response_time) as avg_response_time,
+                    SUM(CASE WHEN error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate
+                FROM chat_interactions
+                WHERE intent_type IS NOT NULL
+                GROUP BY intent_type
+            """,
+            'sentiment_analysis_metrics': """
+                CREATE OR REPLACE VIEW sentiment_analysis_metrics AS
+                SELECT 
+                    DATE(ci.timestamp) as date,
+                    AVG(sm.sentiment_score) as avg_sentiment,
+                    AVG(sm.satisfaction_score) as avg_satisfaction,
+                    AVG(sm.urgency_score) as avg_urgency,
+                    AVG(sm.clarity_score) as avg_clarity,
+                    COUNT(*) as total_interactions
+                FROM chat_interactions ci
+                JOIN sentiment_metrics sm ON ci.id = sm.interaction_id
+                GROUP BY DATE(ci.timestamp)
+            """,
+            'content_matching_metrics': """
+                CREATE OR REPLACE VIEW content_matching_metrics AS
+                SELECT 
+                    content_type,
+                    COUNT(*) as total_matches,
+                    AVG(similarity_score) as avg_similarity,
+                    SUM(CASE WHEN rank_position = 1 THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as top_rank_rate,
+                    SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
+                FROM chat_analytics
+                GROUP BY content_type
+            """,
             'daily_search_metrics': """
                 CREATE OR REPLACE VIEW daily_search_metrics AS
                 SELECT 
@@ -322,9 +447,12 @@ class SchemaManager:
                     COUNT(*) as total_searches,
                     COUNT(DISTINCT user_id) as unique_users,
                     AVG(response_time) as avg_response_time,
-                    SUM(CASE WHEN error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate
+                    SUM(CASE WHEN result_count > 0 THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as success_rate,
+                    AVG(result_count) as avg_results,
+                    COUNT(DISTINCT session_id) as total_sessions
                 FROM search_analytics
                 GROUP BY DATE(timestamp)
+                ORDER BY date
             """,
             'expert_interaction_metrics': """
                 CREATE OR REPLACE VIEW expert_interaction_metrics AS
@@ -373,9 +501,59 @@ class SchemaManager:
                 JOIN expert_resource_links erl ON e.id = erl.expert_id
                 JOIN resources_resource r ON r.id = erl.resource_id
                 ORDER BY e.id, r.publication_year DESC
+            """,
+            'expert_search_performance': """
+                CREATE OR REPLACE VIEW expert_search_performance AS
+                SELECT 
+                    esm.expert_id,
+                    COUNT(*) as total_matches,
+                    AVG(esm.similarity_score) as avg_similarity,
+                    AVG(esm.rank_position) as avg_rank,
+                    SUM(CASE WHEN esm.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate,
+                    COUNT(DISTINCT sa.user_id) as unique_users
+                FROM expert_search_matches esm
+                JOIN search_analytics sa ON esm.search_id = sa.search_id
+                GROUP BY esm.expert_id
+            """,
+            'domain_performance_metrics': """
+                CREATE OR REPLACE VIEW domain_performance_metrics AS
+                SELECT 
+                    domain_name,
+                    match_count,
+                    total_clicks,
+                    avg_similarity_score,
+                    last_matched_at,
+                    RANK() OVER (ORDER BY match_count DESC) as popularity_rank,
+                    total_clicks::FLOAT / NULLIF(match_count, 0) as click_rate
+                FROM domain_expertise_analytics
+            """,
+            'session_analytics': """
+                CREATE OR REPLACE VIEW session_analytics AS
+                SELECT 
+                    DATE(start_timestamp) as date,
+                    COUNT(*) as total_sessions,
+                    AVG(query_count) as avg_queries_per_session,
+                    AVG(successful_searches::FLOAT / NULLIF(query_count, 0)) as session_success_rate,
+                    AVG(EXTRACT(EPOCH FROM (end_timestamp - start_timestamp))) as avg_session_duration
+                FROM search_sessions
+                WHERE end_timestamp IS NOT NULL
+                GROUP BY DATE(start_timestamp)
+                ORDER BY date
+            """,
+            'query_patterns': """
+                CREATE OR REPLACE VIEW query_patterns AS
+                SELECT 
+                    query,
+                    COUNT(*) as usage_count,
+                    AVG(result_count) as avg_results,
+                    AVG(response_time) as avg_response_time,
+                    COUNT(DISTINCT user_id) as unique_users
+                FROM search_analytics
+                GROUP BY query
+                HAVING COUNT(*) > 1
+                ORDER BY usage_count DESC
             """
         }
-
 class DatabaseInitializer:
     """Handle database initialization and setup."""
     
@@ -412,6 +590,7 @@ class DatabaseInitializer:
             
             # Create tables in a specific order
             table_groups = [
+                self.schema_manager.table_definitions['chat_tables'],  # Add this back
                 self.schema_manager.table_definitions['core_tables'],
                 self.schema_manager.table_definitions['analytics_tables'],
                 self.schema_manager.table_definitions['interaction_tables'],

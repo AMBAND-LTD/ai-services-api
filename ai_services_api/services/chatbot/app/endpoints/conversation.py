@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, Depends 
 from typing import Optional, Dict 
 from pydantic import BaseModel 
+import json
 from datetime import datetime 
 import logging
 from slowapi import Limiter
@@ -35,61 +36,52 @@ async def get_user_id(request: Request) -> str:
         raise HTTPException(status_code=400, detail="X-User-ID header is required")
     return user_id
 
-async def record_interaction(user_id: str, query: str, response: str, metrics: Dict = None):
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        cur.execute("""
-            INSERT INTO interactions
-                (session_id, user_id, query, response, metrics, timestamp)
-            VALUES 
-                (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            RETURNING id
-        """, (
-            f"session_{user_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-            user_id,
-            query,
-            response,
-            json.dumps(metrics) if metrics else None
-        ))
-        
-        interaction_id = cur.fetchone()[0]
-        conn.commit()
-        return interaction_id
-        
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Error recording interaction: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
+
 
 async def process_chat_request(query: str, user_id: str) -> ChatResponse:
     try:
+        # Start a new session or get existing one
+        session_id = await message_handler.start_chat_session(user_id)
+        
         response_parts = []
         metrics = {
-            "sentiment_score": 0.0,
-            "aspects": {},
+            "sentiment": {
+                "sentiment_score": 0.0,
+                "emotion_labels": ["neutral"],
+                "aspects": {
+                    "satisfaction": 0.0,
+                    "urgency": 0.0,
+                    "clarity": 0.0
+                }
+            },
             "error_occurred": False,
-            "response_time": None
+            "response_time": None,
+            "content_matches": [],
+            "content_types": {
+                "navigation": 0,
+                "publication": 0
+            },
+            "intent": {
+                "type": "general",
+                "confidence": 0.0
+            }
         }
         start_time = datetime.utcnow()
         
         try:
             async for part in message_handler.send_message_async(
                 message=query,
-                user_id=user_id
+                user_id=user_id,
+                session_id=session_id
             ):
-                if isinstance(part, dict):
-                    metrics.update(part)
+                if isinstance(part, dict) and part.get('is_metadata'):
+                    # Update metrics with response metadata
+                    metrics.update(part.get('metadata', {}).get('metrics', {}))
                     continue
                 if isinstance(part, bytes):
                     part = part.decode('utf-8')
                 response_parts.append(part)
+                
         except Exception as e:
             metrics["error_occurred"] = True
             raise e
@@ -98,11 +90,16 @@ async def process_chat_request(query: str, user_id: str) -> ChatResponse:
                 
         complete_response = ''.join(response_parts)
         
-        await record_interaction(
+        # Record interaction using MessageHandler's method
+        await message_handler.record_interaction(
+            session_id=session_id,
             user_id=user_id,
             query=query,
-            response=complete_response,
-            metrics=metrics
+            response_data={
+                'response': complete_response,
+                'metrics': metrics,
+                'error_occurred': metrics["error_occurred"]
+            }
         )
         
         return ChatResponse(
@@ -115,6 +112,15 @@ async def process_chat_request(query: str, user_id: str) -> ChatResponse:
         logger.error(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/chat/{query}")
+@limiter.limit("5/minute") 
+async def chat_endpoint(
+    query: str,
+    request: Request,
+    user_id: str = Depends(get_user_id)
+):
+    return await process_chat_request(query, user_id)
+
 @router.get("/test/chat/{query}")
 @limiter.limit("5/minute")
 async def test_chat_endpoint(
@@ -124,11 +130,3 @@ async def test_chat_endpoint(
 ):
     return await process_chat_request(query, user_id)
 
-@router.get("/chat/{query}")
-@limiter.limit("5/minute") 
-async def chat_endpoint(
-    query: str,
-    request: Request,
-    user_id: str = Depends(get_user_id)
-):
-    return await process_chat_request(query, user_id)

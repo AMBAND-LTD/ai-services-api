@@ -3,6 +3,8 @@ import plotly.express as px
 import streamlit as st
 import numpy as np
 
+TEST_USER_ID = "test_user_123"  # Constant for test user
+
 def safe_format_number(value) -> str:
     """Safely format numbers handling None and NaN values"""
     try:
@@ -31,28 +33,32 @@ def get_adaptive_metrics(conn, start_date, end_date):
             SELECT 
                 DATE(created_at) as date,
                 COALESCE(COUNT(*), 0) as total_recommendations,
-                COALESCE(COUNT(DISTINCT sender_id), 0) as unique_users,
-                COALESCE(AVG(CASE WHEN success = true THEN 1.0 ELSE 0.0 END), 0.0) as success_rate,
-                COALESCE(AVG(CAST(NULLIF(metadata->>'similarity_score', '') AS FLOAT)), 0.0) as avg_similarity_score,
-                COALESCE(COUNT(DISTINCT receiver_id), 0) as unique_experts_recommended
-            FROM expert_interactions
+                COALESCE(COUNT(DISTINCT user_id), 0) as unique_users,
+                COALESCE(COUNT(DISTINCT expert_id), 0) as unique_requesters,
+                COALESCE(COUNT(DISTINCT matched_expert_id), 0) as unique_experts_recommended,
+                COALESCE(AVG(CASE WHEN successful = true THEN 1.0 ELSE 0.0 END), 0.0) as success_rate,
+                COALESCE(AVG(similarity_score), 0.0) as avg_similarity_score,
+                COALESCE(AVG(shared_fields), 0.0) as avg_shared_fields,
+                COALESCE(AVG(shared_skills), 0.0) as avg_shared_skills
+            FROM expert_matching_logs
             WHERE created_at BETWEEN %s AND %s
-            AND interaction_type = 'recommendation_shown'
+            AND user_id != %s  -- Exclude test user
             GROUP BY DATE(created_at)
             ORDER BY date
-        """, (start_date, end_date))
+        """, (start_date, end_date, TEST_USER_ID))
         
         columns = [desc[0] for desc in cursor.description]
         data = cursor.fetchall()
         
-        # If no data, return an empty DataFrame with correct columns
         if not data:
             return pd.DataFrame(columns=columns)
         
         df = pd.DataFrame(data, columns=columns)
         
         # Ensure numeric types
-        numeric_columns = ['total_recommendations', 'unique_users', 'success_rate', 'avg_similarity_score', 'unique_experts_recommended']
+        numeric_columns = ['total_recommendations', 'unique_users', 'unique_requesters',
+                         'unique_experts_recommended', 'success_rate', 'avg_similarity_score',
+                         'avg_shared_fields', 'avg_shared_skills']
         for col in numeric_columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
@@ -75,37 +81,31 @@ def display_adaptive_analytics(metrics, filters=None):
             st.info("No recommendation data available for the selected period")
             return
 
-        # Defensive programming for metric calculations
-        total_recs = metrics['total_recommendations'].sum() if 'total_recommendations' in metrics.columns else 0
-        avg_success = metrics['success_rate'].mean() if 'success_rate' in metrics.columns else 0
-        unique_experts = metrics['unique_experts_recommended'].sum() if 'unique_experts_recommended' in metrics.columns else 0
+        # Metrics calculations
+        total_recs = metrics['total_recommendations'].sum()
+        avg_success = metrics['success_rate'].mean()
+        unique_experts = metrics['unique_experts_recommended'].sum()
+        avg_shared_fields = metrics['avg_shared_fields'].mean()
+        avg_shared_skills = metrics['avg_shared_skills'].mean()
 
-        # Show overall metrics with safe formatting
+        # Display metrics
         col1, col2, col3 = st.columns(3)
-        
         with col1:
-            st.metric(
-                "Total Recommendations", 
-                safe_format_number(total_recs)
-            )
-        
+            st.metric("Total Recommendations", safe_format_number(total_recs))
         with col2:
-            st.metric(
-                "Average Success Rate", 
-                safe_format_percentage(avg_success)
-            )
-        
+            st.metric("Average Success Rate", safe_format_percentage(avg_success))
         with col3:
-            st.metric(
-                "Unique Experts Recommended", 
-                safe_format_number(unique_experts)
-            )
-        
-        # Defensive visualization creation
+            st.metric("Unique Experts Recommended", safe_format_number(unique_experts))
+
+        col4, col5 = st.columns(2)
+        with col4:
+            st.metric("Avg Shared Fields", f"{avg_shared_fields:.1f}")
+        with col5:
+            st.metric("Avg Shared Skills", f"{avg_shared_skills:.1f}")
+
+        # Create visualizations
         def create_safe_line_plot(df, x_col, y_cols, title, labels=None):
-            """Create a safe line plot with error handling"""
             try:
-                # Ensure columns exist and have data
                 existing_cols = [col for col in y_cols if col in df.columns and df[col].notna().any()]
                 
                 if not existing_cols:
@@ -128,35 +128,35 @@ def display_adaptive_analytics(metrics, filters=None):
         volume_fig = create_safe_line_plot(
             metrics, 
             x_col="date", 
-            y_cols=["total_recommendations", "unique_users"],
-            title="Daily Recommendation Volume",
+            y_cols=["total_recommendations", "unique_users", "unique_requesters"],
+            title="Daily Activity Volume",
             labels={"value": "Count", "variable": "Metric"}
         )
         if volume_fig:
             st.plotly_chart(volume_fig)
-        
-        # Success rate trend
-        success_fig = create_safe_line_plot(
+
+        # Success and similarity metrics
+        metrics_fig = create_safe_line_plot(
             metrics,
             x_col="date", 
-            y_cols=["success_rate"],
-            title="Recommendation Success Rate",
-            labels={"success_rate": "Success Rate"}
+            y_cols=["success_rate", "avg_similarity_score"],
+            title="Success Rate and Similarity Score Trends",
+            labels={"value": "Score", "variable": "Metric"}
         )
-        if success_fig:
-            success_fig.update_layout(yaxis_tickformat='.2%')
-            st.plotly_chart(success_fig)
-        
-        # Similarity score trend
-        similarity_fig = create_safe_line_plot(
+        if metrics_fig:
+            metrics_fig.update_layout(yaxis_tickformat='.2%')
+            st.plotly_chart(metrics_fig)
+
+        # Shared attributes trends
+        shared_fig = create_safe_line_plot(
             metrics,
             x_col="date", 
-            y_cols=["avg_similarity_score"],
-            title="Average Similarity Score Trend",
-            labels={"avg_similarity_score": "Similarity Score"}
+            y_cols=["avg_shared_fields", "avg_shared_skills"],
+            title="Average Shared Attributes Trend",
+            labels={"value": "Count", "variable": "Attribute"}
         )
-        if similarity_fig:
-            st.plotly_chart(similarity_fig)
+        if shared_fig:
+            st.plotly_chart(shared_fig)
 
     except Exception as e:
         st.error(f"Error displaying adaptive analytics: {str(e)}")

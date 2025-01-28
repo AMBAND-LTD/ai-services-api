@@ -60,7 +60,7 @@ def get_usage_metrics(
                         DATE(timestamp) as timestamp,
                         user_id,
                         id
-                    FROM search_logs
+                    FROM search_analytics
                     WHERE timestamp BETWEEN %s AND %s
                     GROUP BY DATE(timestamp), user_id, id
                 ) s ON DATE(c.created_at) = DATE(s.timestamp) AND c.user_id = s.user_id
@@ -98,7 +98,7 @@ def get_usage_metrics(
                         NULLIF(COUNT(*), 0) * 100 as error_rate,
                     COUNT(*) as total_queries,
                     COUNT(DISTINCT s.user_id) as unique_users
-                FROM search_logs s
+                FROM search_analytics s
                 WHERE s.timestamp BETWEEN %s AND %s
                 GROUP BY DATE(s.timestamp)
                 ORDER BY DATE(s.timestamp)

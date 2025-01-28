@@ -26,9 +26,9 @@ def get_expert_metrics(conn, start_date, end_date, expert_count):
                     expert_id,
                     COUNT(*) as search_matches,
                     AVG(rank_position) as avg_rank,
-                    SUM(CASE WHEN expert_searches.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as search_click_rate
-                FROM expert_searches
-                JOIN search_logs sl ON expert_searches.search_id = sl.id
+                    SUM(CASE WHEN expert_search_matches.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as search_click_rate
+                FROM expert_search_matches
+                JOIN search_analytics sl ON expert_search_matches.search_id = sl.id
                 WHERE sl.timestamp BETWEEN %s AND %s
                 GROUP BY expert_id
             )
