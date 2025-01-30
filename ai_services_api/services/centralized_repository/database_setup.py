@@ -515,6 +515,29 @@ class SchemaManager:
                 JOIN search_analytics sa ON esm.search_id = sa.search_id
                 GROUP BY esm.expert_id
             """,
+            'daily_search_metrics': """
+                CREATE OR REPLACE VIEW daily_search_metrics AS
+                SELECT 
+                    DATE(sa.timestamp) as date,
+                    COUNT(*) as total_searches,
+                    COUNT(DISTINCT sa.user_id) as unique_users,
+                    AVG(sa.response_time) as avg_response_time,
+                    SUM(CASE WHEN sa.result_count > 0 THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as success_rate,
+                    AVG(sa.result_count) as avg_results,
+                    COUNT(DISTINCT ss.session_id) as total_sessions,
+                    -- Expert matching metrics
+                    COUNT(DISTINCT esm.expert_id) as matched_experts,
+                    AVG(esm.similarity_score) as avg_similarity,
+                    AVG(esm.rank_position) as avg_rank_position
+                FROM search_analytics sa
+                LEFT JOIN search_sessions ss ON sa.search_id = ss.id
+                LEFT JOIN expert_search_matches esm ON sa.search_id = esm.search_id
+                WHERE sa.timestamp IS NOT NULL
+                GROUP BY DATE(sa.timestamp)
+                ORDER BY date DESC
+            """,
+            
+
             'domain_performance_metrics': """
                 CREATE OR REPLACE VIEW domain_performance_metrics AS
                 SELECT 

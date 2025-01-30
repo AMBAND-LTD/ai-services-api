@@ -41,19 +41,19 @@ def get_usage_metrics(
             query = """
             WITH UserActivityMetrics AS (
                 SELECT 
-                    DATE(COALESCE(c.created_at, s.timestamp)) as date,
+                    DATE(COALESCE(c.timestamp, s.timestamp)) as date,
                     COALESCE(COUNT(DISTINCT COALESCE(c.user_id, s.user_id)), 0) as total_users,
                     COALESCE(COUNT(DISTINCT c.user_id), 0) as chat_users,
                     COALESCE(COUNT(DISTINCT s.user_id), 0) as search_users,
                     COALESCE(COUNT(c.id), 0) + COALESCE(COUNT(s.id), 0) as total_interactions
                 FROM (
                     SELECT 
-                        DATE(created_at) as created_at,
+                        DATE(timestamp) as timestamp,
                         user_id,
                         id
                     FROM chat_interactions
-                    WHERE created_at BETWEEN %s AND %s
-                    GROUP BY DATE(created_at), user_id, id
+                    WHERE timestamp BETWEEN %s AND %s
+                    GROUP BY DATE(timestamp), user_id, id
                 ) c
                 FULL OUTER JOIN (
                     SELECT 
@@ -63,20 +63,20 @@ def get_usage_metrics(
                     FROM search_analytics
                     WHERE timestamp BETWEEN %s AND %s
                     GROUP BY DATE(timestamp), user_id, id
-                ) s ON DATE(c.created_at) = DATE(s.timestamp) AND c.user_id = s.user_id
-                GROUP BY DATE(COALESCE(c.created_at, s.timestamp))
-                ORDER BY DATE(COALESCE(c.created_at, s.timestamp))
+                ) s ON DATE(c.timestamp) = DATE(s.timestamp) AND c.user_id = s.user_id
+                GROUP BY DATE(COALESCE(c.timestamp, s.timestamp))
+                ORDER BY DATE(COALESCE(c.timestamp, s.timestamp))
             ),
             SessionMetrics AS (
                 SELECT 
-                    DATE(start_time) as date,
+                    DATE(start_timestamp) as date,
                     COUNT(*) as total_sessions,
                     COALESCE(
                         AVG(
                             CASE 
-                                WHEN end_time IS NOT NULL 
-                                THEN EXTRACT(epoch FROM (end_time - start_time))
-                                ELSE EXTRACT(epoch FROM (CURRENT_TIMESTAMP - start_time))
+                                WHEN end_timestamp IS NOT NULL 
+                                THEN EXTRACT(epoch FROM (end_timestamp - start_timestamp))
+                                ELSE EXTRACT(epoch FROM (CURRENT_TIMESTAMP - start_timestamp))
                             END
                         ), 
                         0
@@ -84,17 +84,17 @@ def get_usage_metrics(
                     COALESCE(AVG(total_messages), 0) as avg_messages_per_session,
                     COALESCE(SUM(CASE WHEN successful THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0), 0) as success_rate
                 FROM chat_sessions
-                WHERE start_time BETWEEN %s AND %s
-                GROUP BY DATE(start_time)
-                ORDER BY DATE(start_time)
+                WHERE start_timestamp BETWEEN %s AND %s
+                GROUP BY DATE(start_timestamp)
+                ORDER BY DATE(start_timestamp)
             ),
             PerformanceMetrics AS (
                 SELECT 
                     DATE(s.timestamp) as date,
-                    COALESCE(AVG(EXTRACT(epoch FROM s.response_time::interval)), 0) as avg_response_time,
-                    COUNT(CASE WHEN s.clicked = true OR s.success_rate = 1 THEN 1 END)::float / 
+                    COALESCE(AVG(s.response_time), 0) as avg_response_time,
+                    COUNT(CASE WHEN s.result_count > 0 THEN 1 END)::float / 
                         NULLIF(COUNT(*), 0) * 100 as success_rate,
-                    COUNT(CASE WHEN s.success_rate < 1 THEN 1 END)::float / 
+                    COUNT(CASE WHEN s.result_count = 0 THEN 1 END)::float / 
                         NULLIF(COUNT(*), 0) * 100 as error_rate,
                     COUNT(*) as total_queries,
                     COUNT(DISTINCT s.user_id) as unique_users
@@ -198,58 +198,68 @@ def display_usage_analytics(filters: Dict[str, Any], metrics: Dict[str, pd.DataF
         # Daily Active Users
         if not activity_data.empty:
             st.plotly_chart(
-                px.line(
+                create_metric_chart(
                     activity_data,
-                    x="date",
-                    y=["total_users", "chat_users", "search_users"],
-                    title="Daily Active Users",
-                    labels={"value": "Count", "variable": "Metric"}
+                    "date",
+                    ["total_users", "chat_users", "search_users"],
+                    "Daily Active Users"
                 )
             )
         
         # Total Interactions
         if not activity_data.empty:
             st.plotly_chart(
-                px.line(
+                create_metric_chart(
                     activity_data,
-                    x="date",
-                    y="total_interactions",
-                    title="Total Interactions"
+                    "date",
+                    ["total_interactions"],
+                    "Total Interactions"
                 )
             )
 
-        # Session Duration
+        # Session Analytics
         if not session_data.empty:
-            st.plotly_chart(
-                px.line(
-                    session_data,
-                    x="date",
-                    y="avg_session_duration",
-                    title="Average Session Duration"
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(
+                    create_metric_chart(
+                        session_data,
+                        "date",
+                        ["avg_session_duration"],
+                        "Average Session Duration (seconds)"
+                    )
                 )
-            )
+            with col2:
+                st.plotly_chart(
+                    create_metric_chart(
+                        session_data,
+                        "date",
+                        ["avg_messages_per_session"],
+                        "Average Messages per Session"
+                    )
+                )
 
         # Performance Metrics
         if not perf_data.empty:
-            # Average Response Time
-            st.plotly_chart(
-                px.line(
-                    perf_data,
-                    x="date",
-                    y="avg_response_time",
-                    title="Average Response Time"
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(
+                    create_metric_chart(
+                        perf_data,
+                        "date",
+                        ["avg_response_time"],
+                        "Average Response Time (seconds)"
+                    )
                 )
-            )
-            
-            # Success and Error Rates
-            st.plotly_chart(
-                px.line(
-                    perf_data,
-                    x="date",
-                    y=["success_rate", "error_rate"],
-                    title="Success and Error Rates"
+            with col2:
+                st.plotly_chart(
+                    create_metric_chart(
+                        perf_data,
+                        "date",
+                        ["success_rate", "error_rate"],
+                        "Success and Error Rates (%)"
+                    )
                 )
-            )
 
     except Exception as e:
         logger.error(f"Error displaying analytics: {str(e)}")
