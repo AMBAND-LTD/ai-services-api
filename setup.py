@@ -21,7 +21,8 @@ from ai_services_api.services.centralized_repository.orcid.orcid_processor impor
 from ai_services_api.services.centralized_repository.knowhub.knowhub_scraper import KnowhubScraper
 from ai_services_api.services.centralized_repository.website.website_scraper import WebsiteScraper
 from ai_services_api.services.centralized_repository.nexus.researchnexus_scraper import ResearchNexusScraper
-from ai_services_api.services.centralized_repository.database_setup import DatabaseInitializer, ExpertManager
+from ai_services_api.services.centralized_repository.openalex.expert_processor import ExpertProcessor
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -140,15 +141,8 @@ class SystemInitializer:
     async def initialize_graph(self) -> bool:
         """Initialize the graph with experts and their relationships"""
         try:
-            # Import GraphDatabaseInitializer here to avoid circular import
-            from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
-            
-            # Create an instance of GraphDatabaseInitializer
             graph_initializer = GraphDatabaseInitializer()
-            
-            # Use the async method from GraphDatabaseInitializer
             await graph_initializer.initialize_graph()
-            
             logger.info("Graph initialization complete!")
             return True
         except Exception as e:
@@ -159,8 +153,13 @@ class SystemInitializer:
         """Process publications from all sources"""
         openalex_processor = OpenAlexProcessor()
         publication_processor = PublicationProcessor(openalex_processor.db, TextSummarizer())
+        expert_processor = ExpertProcessor(openalex_processor.db, os.getenv('OPENALEX_API_URL'))
 
         try:
+            # First, process experts' fields and domains using Gemini
+            logger.info("Processing expert fields with Gemini...")
+            await expert_processor.process_all_experts()
+            logger.info("Expert fields processing complete!")
             
             if not self.config.skip_openalex:
                 logger.info("Updating experts with OpenAlex data...")
@@ -315,6 +314,7 @@ class SystemInitializer:
             raise
         finally:
             openalex_processor.close()
+            expert_processor.close()
 
     async def create_search_index(self) -> bool:
         """Create the FAISS search index."""
@@ -351,6 +351,19 @@ class SystemInitializer:
             if not self.config.skip_database:
                 await self.initialize_database()
                 await self.load_initial_experts()
+                
+                # Process expert fields immediately after loading experts
+                logger.info("Starting expert fields processing...")
+                openalex_processor = OpenAlexProcessor()
+                expert_processor = ExpertProcessor(openalex_processor.db, os.getenv('OPENALEX_API_URL'))
+                try:
+                    await expert_processor.process_all_experts()
+                    logger.info("Expert fields processing complete!")
+                except Exception as e:
+                    logger.error(f"Error processing expert fields: {e}")
+                finally:
+                    expert_processor.close()
+                    openalex_processor.close()
             
             if not self.config.skip_publications:
                 await self.process_publications()
@@ -378,7 +391,6 @@ def parse_arguments() -> argparse.Namespace:
     
     parser.add_argument('--skip-database', action='store_true',
                     help='Skip database initialization')
-
     parser.add_argument('--skip-openalex', action='store_true',
                     help='Skip OpenAlex data enrichment')
     parser.add_argument('--skip-publications', action='store_true',

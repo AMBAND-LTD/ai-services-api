@@ -82,6 +82,10 @@ class GraphDatabaseInitializer:
             "CREATE INDEX theme_name IF NOT EXISTS FOR (t:Theme) ON (t.name)",
             "CREATE INDEX unit_name IF NOT EXISTS FOR (u:Unit) ON (u.name)",
             
+            # New indexes for fields and domains
+            "CREATE INDEX field_name IF NOT EXISTS FOR (f:Field) ON (f.name)",
+            "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
+            
             # Semantic indexes
             "CREATE INDEX concept_name IF NOT EXISTS FOR (c:Concept) ON (c.name)",
             "CREATE INDEX area_name IF NOT EXISTS FOR (ra:ResearchArea) ON (ra.name)",
@@ -117,6 +121,8 @@ class GraphDatabaseInitializer:
                     last_name,
                     knowledge_expertise,
                     designation,
+                    domains,
+                    fields,
                     theme,
                     unit,
                     orcid,
@@ -167,7 +173,6 @@ class GraphDatabaseInitializer:
                         'related': []
                     }
 
-                # Clean the response text - remove code fences, markdown, and whitespace
                 cleaned_response = (response.text
                                 .replace('```json', '')
                                 .replace('```JSON', '')
@@ -215,7 +220,7 @@ class GraphDatabaseInitializer:
         try:
             # Unpack expert data
             (expert_id, first_name, last_name, knowledge_expertise, designation, 
-            theme, unit, orcid, is_active) = expert_data
+             domains, fields, theme, unit, orcid, is_active) = expert_data
             
             expert_name = f"{first_name} {last_name}"
 
@@ -239,11 +244,37 @@ class GraphDatabaseInitializer:
                 "is_active": is_active
             })
 
-            # Process expertise semantically (now synchronous)
+            # Process expertise semantically
             semantic_data = self._process_expertise(knowledge_expertise)
 
             # Create semantic relationships
             self._create_semantic_relationships(session, str(expert_id), semantic_data)
+
+            # Create field relationships
+            if fields:
+                for field in fields:
+                    session.run("""
+                        MERGE (f:Field {name: $field})
+                        MERGE (e:Expert {id: $expert_id})-[r:SPECIALIZES_IN]->(f)
+                        SET r.weight = 0.9,
+                            r.last_updated = datetime()
+                    """, {
+                        "expert_id": str(expert_id),
+                        "field": field
+                    })
+
+            # Create domain relationships
+            if domains:
+                for domain in domains:
+                    session.run("""
+                        MERGE (d:Domain {name: $domain})
+                        MERGE (e:Expert {id: $expert_id})-[r:WORKS_IN_DOMAIN]->(d)
+                        SET r.weight = 0.85,
+                            r.last_updated = datetime()
+                    """, {
+                        "expert_id": str(expert_id),
+                        "domain": domain
+                    })
 
             # Create organizational relationships
             if theme:
